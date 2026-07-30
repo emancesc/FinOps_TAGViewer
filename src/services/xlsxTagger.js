@@ -23,6 +23,30 @@ function setXlsxProgress(projectId, patch) {
 }
 
 // ---------------------------------------------------------------------------
+// Pause / Resume
+// ---------------------------------------------------------------------------
+export function pauseXlsxTagging(projectId) {
+  const job = _xlsxJobs.get(projectId);
+  if (job && job.status === 'running') setXlsxProgress(projectId, { status: 'paused' });
+}
+
+export function resumeXlsxTagging(projectId) {
+  const job = _xlsxJobs.get(projectId);
+  if (job && job.status === 'paused') setXlsxProgress(projectId, { status: 'running' });
+}
+
+function waitIfPaused(projectId) {
+  return new Promise(resolve => {
+    const check = () => {
+      const job = _xlsxJobs.get(projectId);
+      if (!job || job.status !== 'paused') return resolve();
+      setTimeout(check, 400);
+    };
+    check();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // A) Detect columns
 // ---------------------------------------------------------------------------
 export async function detectXlsxColumns(filePath) {
@@ -162,6 +186,8 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
     const llm = getLLM(llmProvider);
 
     for (let i = 0; i < taggableRows.length; i += BATCH_SIZE) {
+      await waitIfPaused(projectId);
+
       const batchNum = Math.floor(i / BATCH_SIZE) + 1;
       const batch = taggableRows.slice(i, i + BATCH_SIZE);
       setXlsxProgress(projectId, { batch: batchNum });
@@ -210,7 +236,12 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
         }
       }
 
-      setXlsxProgress(projectId, { processed: Math.min(i + BATCH_SIZE, total) });
+      const processed = Math.min(i + BATCH_SIZE, total);
+      const job2 = _xlsxJobs.get(projectId);
+      const elapsed = job2?.startedAt ? Date.now() - job2.startedAt : 0;
+      const rate = elapsed > 0 ? processed / elapsed : 0;
+      const etaMs = rate > 0 && processed < total ? Math.round((total - processed) / rate) : null;
+      setXlsxProgress(projectId, { processed, etaMs });
     }
 
     // Aggiorna il range del foglio dopo le modifiche

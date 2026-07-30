@@ -115,7 +115,8 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 ### Widget Task Progress
 - Pannello floating in basso a destra, visibile non appena il tagging parte
 - Aggiornamento in tempo reale via SSE ogni 1.5 secondi
-- Per ogni job mostra: batch corrente (`N/M`), risorse processate, nomi in elaborazione, barra di avanzamento, tempo trascorso
+- Per ogni job mostra: batch corrente (`N/M`), risorse processate, barra di avanzamento, tempo trascorso ed **ETA stimata** (`~Xm Ys`) calcolata dalla velocità media dei batch precedenti
+- **Pausa / Resume**: bottone ⏸ durante l'esecuzione; il processo si sospende tra un batch e l'altro (senza perdere lo stato) e riprende con ▶
 - Errori per batch espandibili (dettaglio messaggio)
 - Stato finale: completato, completato con errori parziali, errore critico
 
@@ -402,16 +403,23 @@ TagsViewer running at http://localhost:3000
 | PATCH | `/api/tagging/:projectId/resource/:resourceId/confirm` | Conferma manuale tag (body: `{ tags }`) |
 | POST | `/api/tagging/:projectId/detect-columns` | Auto-rileva colonne del file `tagging_target` (body: `{ storedAs }`) |
 | POST | `/api/tagging/:projectId/run-xlsx` | Avvia pipeline XLSX tagging (fire-and-forget) |
+| POST | `/api/tagging/:projectId/pause-xlsx` | Sospende il tagging XLSX tra un batch e il successivo |
+| POST | `/api/tagging/:projectId/resume-xlsx` | Riprende il tagging XLSX sospeso |
 | GET | `/api/tagging/:projectId/progress-xlsx` | **SSE** — progresso pipeline XLSX |
 | GET | `/api/tagging/:projectId/result-xlsx` | Download XLSX completato |
 
 **Formato eventi SSE progress**:
 ```json
 { "status": "running", "total": 120, "processed": 40, "batch": 2, "batchTotal": 6,
-  "currentNames": ["ec2-web-01","rds-main"], "startedAt": 1722330000000, "errors": [] }
+  "startedAt": 1722330000000, "etaMs": 150000, "errors": [] }
+
+{ "status": "paused", "total": 120, "processed": 40, "batch": 2, "batchTotal": 6,
+  "startedAt": 1722330000000, "etaMs": null, "errors": [] }
 
 { "status": "done", "total": 120, "processed": 120, "endedAt": 1722330240000, "errors": [] }
 ```
+
+> **`etaMs`**: millisecondi stimati al completamento, calcolati dalla velocità media dei batch precedenti. `null` se il processo è in pausa o non ancora avviato.
 
 ### Strategies
 

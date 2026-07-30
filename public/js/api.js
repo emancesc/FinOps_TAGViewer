@@ -60,6 +60,8 @@ window.api = {
   detectColumns:     (pid, storedAs) => req('POST', `/api/tagging/${pid}/detect-columns`, { storedAs }),
   saveColumnConfig:  (pid, data) => fetch(`/api/projects/${pid}/column-config`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) }).then(r => r.json()),
   runXlsxTagging:    (pid)     => req('POST', `/api/tagging/${pid}/run-xlsx`, {}),
+  pauseXlsxTagging:  (pid)     => req('POST', `/api/tagging/${pid}/pause-xlsx`, {}),
+  resumeXlsxTagging: (pid)     => req('POST', `/api/tagging/${pid}/resume-xlsx`, {}),
   getXlsxProgress:   (pid)     => `/api/tagging/${pid}/progress-xlsx`,
   getXlsxResultUrl:  (pid)     => `/api/tagging/${pid}/result-xlsx`,
 

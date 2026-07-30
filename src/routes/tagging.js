@@ -9,6 +9,8 @@ import {
   getXlsxTaggingProgress,
   getXlsxOutputPath,
   extractFileText,
+  pauseXlsxTagging,
+  resumeXlsxTagging,
 } from '../services/xlsxTagger.js';
 
 const router = Router();
@@ -192,6 +194,18 @@ router.get('/:projectId/progress-xlsx', (req, res) => {
   emit();
   iv = setInterval(emit, 1500);
   req.on('close', () => clearInterval(iv));
+});
+
+// POST /api/tagging/:projectId/pause-xlsx
+router.post('/:projectId/pause-xlsx', (req, res) => {
+  pauseXlsxTagging(req.params.projectId);
+  res.json({ status: 'paused' });
+});
+
+// POST /api/tagging/:projectId/resume-xlsx
+router.post('/:projectId/resume-xlsx', (req, res) => {
+  resumeXlsxTagging(req.params.projectId);
+  res.json({ status: 'running' });
 });
 
 // GET /api/tagging/:projectId/result-xlsx — scarica il file XLSX taggato

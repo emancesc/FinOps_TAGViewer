@@ -96,7 +96,21 @@ function updateJobCard(projectId, projectName, data) {
   const card = document.getElementById(`task-${projectId}`);
   if (!card) return;
   card.innerHTML = jobCardHtml(projectId, projectName, data);
+  attachTaskHandlers(card, projectId);
   updateFabCount();
+}
+
+function attachTaskHandlers(card, projectId) {
+  const pauseBtn = card.querySelector('.task-pause-btn');
+  if (pauseBtn) pauseBtn.addEventListener('click', async () => {
+    pauseBtn.disabled = true;
+    await window.api.pauseXlsxTagging(projectId).catch(() => {});
+  });
+  const resumeBtn = card.querySelector('.task-resume-btn');
+  if (resumeBtn) resumeBtn.addEventListener('click', async () => {
+    resumeBtn.disabled = true;
+    await window.api.resumeXlsxTagging(projectId).catch(() => {});
+  });
 }
 
 function updateFabCount() {
@@ -104,12 +118,24 @@ function updateFabCount() {
   document.getElementById('taskFabLabel').textContent = running;
 }
 
+function formatEta(ms) {
+  if (!ms || ms <= 0) return null;
+  const s = Math.round(ms / 1000);
+  if (s < 10) return '< 10 sec';
+  if (s < 60) return `~${s} sec`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `~${m}m ${rem}s` : `~${m} min`;
+}
+
 function jobCardHtml(projectId, projectName, d) {
   const pct = d.total > 0 ? Math.round(d.processed / d.total * 100) : 0;
   const elapsed = d.startedAt ? Math.round((Date.now() - d.startedAt) / 1000) : 0;
+  const eta = formatEta(d.etaMs);
 
   const statusIcon = {
     running: '<span class="task-spinner"></span>',
+    paused: '⏸',
     done: '✅',
     done_with_errors: '⚠',
     error: '❌',
@@ -118,12 +144,14 @@ function jobCardHtml(projectId, projectName, d) {
 
   const statusColor = {
     running: 'var(--accent)',
+    paused: 'var(--warn)',
     done: 'var(--accent2)',
     done_with_errors: 'var(--warn)',
     error: 'var(--danger)',
   }[d.status] || 'var(--text-muted)';
 
   const doneClass = (d.status === 'done' || d.status === 'done_with_errors' || d.status === 'error') ? 'done' : '';
+  const isActive = d.status === 'running' || d.status === 'paused';
 
   return `
     <div class="task-card-inner ${doneClass}">
@@ -133,7 +161,7 @@ function jobCardHtml(projectId, projectName, d) {
         <span style="color:${statusColor};font-size:.75rem">${d.status || 'avvio…'}</span>
       </div>
 
-      ${d.status === 'running' ? `
+      ${isActive ? `
         <div style="font-size:.78rem;color:var(--text-muted);margin:4px 0">
           Batch ${d.batch || 0}/${d.batchTotal || '?'} — ${d.processed || 0}/${d.total} risorse
           ${d.currentNames?.length ? `<br><span style="opacity:.7">▸ ${d.currentNames.join(', ')}</span>` : ''}
@@ -141,7 +169,16 @@ function jobCardHtml(projectId, projectName, d) {
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>
-        <div style="font-size:.72rem;color:var(--text-muted);text-align:right;margin-top:2px">${pct}% · ${elapsed}s</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+          <span style="font-size:.72rem;color:var(--text-muted)">
+            ${pct}% · ${elapsed}s trascorsi
+            ${eta ? ` · ETA: <strong>${eta}</strong>` : ''}
+          </span>
+          ${d.status === 'running'
+            ? `<button class="task-pause-btn" style="font-size:.7rem;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">⏸ Pausa</button>`
+            : `<button class="task-resume-btn" style="font-size:.7rem;padding:2px 8px;background:var(--accent);border:none;border-radius:4px;color:#fff;cursor:pointer">▶ Riprendi</button>`
+          }
+        </div>
       ` : ''}
 
       ${d.status === 'done' ? `
