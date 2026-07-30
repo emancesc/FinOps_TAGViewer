@@ -34,7 +34,7 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
   const { docType } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'File mancante' });
-  if (!['resource_export', 'guideline', 'assessment'].includes(docType))
+  if (!['resource_export', 'guideline', 'assessment', 'tagging_target'].includes(docType))
     return res.status(400).json({ error: 'docType non valido' });
 
   try {
@@ -42,7 +42,13 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
     const proj = await runQuery(`MATCH (p:Project {id: $id}) RETURN p`, { id: projectId });
     if (!proj.length) return res.status(404).json({ error: 'Progetto non trovato' });
 
-    const { content, resources, relationships } = await parseDocument(req.file.path, docType, req.file.originalname);
+    let content = '', resources = [], relationships = [];
+    if (docType !== 'tagging_target') {
+      const parsed = await parseDocument(req.file.path, docType, req.file.originalname);
+      content = parsed.content || '';
+      resources = parsed.resources || [];
+      relationships = parsed.relationships || [];
+    }
 
     const docId = uuidv4();
     await runQuery(
@@ -71,6 +77,7 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
     res.status(201).json({
       id: docId,
       filename: req.file.originalname,
+      storedAs: req.file.filename,
       docType,
       resourceCount: resources?.length ?? 0,
       contentLength: content?.length ?? 0,

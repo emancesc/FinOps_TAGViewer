@@ -62,34 +62,128 @@ function parseResourceCsv(raw) {
   return rows.map(normalizeResource);
 }
 
-function normalizeResource(item) {
-  // Supporta sia il formato AWS Resource Explorer che export custom CINECA
-  const arn = item.Arn || item.arn || item.ARN || item.ResourceARN || '';
-  const type = item.ResourceType || item.Type || item.type || inferTypeFromArn(arn);
-  const name = item.Name || item.name || item.ResourceId || extractNameFromArn(arn) || arn;
-  const region = item.Region || item.region || extractRegionFromArn(arn) || '';
-  const accountId = item.AccountId || item.account_id || extractAccountFromArn(arn) || '';
+// Mappa campi AWS CLI → tipo risorsa
+const AWS_CLI_FORMATS = [
+  { key: 'VolumeId',            type: 'AWS::EC2::Volume',          service: 'EC2' },
+  { key: 'SnapshotId',          type: 'AWS::EC2::Snapshot',         service: 'EC2' },
+  { key: 'SecurityGroupId',     type: 'AWS::EC2::SecurityGroup',    service: 'EC2' },
+  { key: 'SubnetId',            type: 'AWS::EC2::Subnet',           service: 'EC2' },
+  { key: 'VpcId',               type: 'AWS::EC2::VPC',              service: 'EC2' },
+  { key: 'ImageId',             type: 'AWS::EC2::Image',            service: 'EC2' },
+  { key: 'DBInstanceIdentifier',type: 'AWS::RDS::DBInstance',       service: 'RDS' },
+  { key: 'DBClusterIdentifier', type: 'AWS::RDS::DBCluster',        service: 'RDS' },
+  { key: 'FunctionName',        type: 'AWS::Lambda::Function',      service: 'Lambda' },
+  { key: 'BucketName',          type: 'AWS::S3::Bucket',            service: 'S3' },
+  { key: 'ClusterName',         type: 'AWS::ECS::Cluster',          service: 'ECS' },
+  { key: 'ServiceName',         type: 'AWS::ECS::Service',          service: 'ECS' },
+  { key: 'TableName',           type: 'AWS::DynamoDB::Table',       service: 'DynamoDB' },
+  { key: 'QueueUrl',            type: 'AWS::SQS::Queue',            service: 'SQS' },
+  { key: 'TopicArn',            type: 'AWS::SNS::Topic',            service: 'SNS' },
+  { key: 'DistributionId',      type: 'AWS::CloudFront::Distribution', service: 'CloudFront' },
+  { key: 'HostedZoneId',        type: 'AWS::Route53::HostedZone',   service: 'Route53' },
+  { key: 'CacheClusterId',      type: 'AWS::ElastiCache::CacheCluster', service: 'ElastiCache' },
+  { key: 'FileSystemId',        type: 'AWS::EFS::FileSystem',       service: 'EFS' },
+  { key: 'NatGatewayId',        type: 'AWS::EC2::NatGateway',       service: 'EC2' },
+  { key: 'InternetGatewayId',   type: 'AWS::EC2::InternetGateway',  service: 'EC2' },
+  { key: 'RouteTableId',        type: 'AWS::EC2::RouteTable',       service: 'EC2' },
+  { key: 'NetworkInterfaceId',  type: 'AWS::EC2::NetworkInterface', service: 'EC2' },
+  { key: 'AllocationId',        type: 'AWS::EC2::EIP',              service: 'EC2' },
+  { key: 'KeyName',             type: 'AWS::EC2::KeyPair',          service: 'EC2' },
+];
 
+function extractTagsFromItem(item) {
   let rawTags = {};
-  if (item.Tags && typeof item.Tags === 'object') rawTags = item.Tags;
-  else if (typeof item.Tags === 'string') {
+  if (!item.Tags) return rawTags;
+  if (Array.isArray(item.Tags)) {
+    item.Tags.forEach(t => { if (t.Key && t.Value !== undefined) rawTags[t.Key] = t.Value; });
+  } else if (typeof item.Tags === 'object') {
+    rawTags = item.Tags;
+  } else if (typeof item.Tags === 'string') {
     try { rawTags = JSON.parse(item.Tags); } catch (_) { rawTags = parseCsvTags(item.Tags); }
   }
+  return rawTags;
+}
 
+function nameFromTags(tags) {
+  return tags?.Name || tags?.name || tags?.['aws:cloudformation:stack-name'] || '';
+}
+
+function normalizeResource(item) {
+  // ── Formato AWS Resource Explorer (ha campo ARN) ──────────────────────────
+  const arn = item.Arn || item.arn || item.ARN || item.ResourceARN
+           || item.LoadBalancerArn || item.TargetGroupArn || item.TopicArn
+           || item.StreamARN || item.RoleArn || item.PolicyArn || '';
+
+  if (arn && arn.startsWith('arn:')) {
+    const type = item.ResourceType || item.Type || item.type || inferTypeFromArn(arn);
+    const rawTags = extractTagsFromItem(item);
+    const name = item.Name || item.name || nameFromTags(rawTags) || extractNameFromArn(arn);
+    return {
+      id: uuidv4(), arn,
+      resourceType: type, service: extractService(type),
+      resourceId: extractResourceId(arn) || name,
+      name: name || arn,
+      region: item.Region || item.region || extractRegionFromArn(arn),
+      accountId: item.AccountId || item.account_id || extractAccountFromArn(arn),
+      rawTags, proposedTags: {}, confidence: 0, status: 'pending', notes: '',
+    };
+  }
+
+  // ── Formati AWS CLI (export di servizi specifici) ─────────────────────────
+  for (const fmt of AWS_CLI_FORMATS) {
+    if (!item[fmt.key]) continue;
+    const resourceId = item[fmt.key];
+    const rawTags = extractTagsFromItem(item);
+    const name = item.Name || item.name || nameFromTags(rawTags) || resourceId;
+    const region = item.Region || item.region
+      || (item.AvailabilityZone ? item.AvailabilityZone.slice(0, -1) : '')
+      || (item.Endpoint?.Address ? '' : '');
+    const accountId = item.OwnerId || item.AccountId || item.account_id || '';
+
+    // Metadati extra rilevanti da includere nelle note
+    const extra = {};
+    ['State', 'Status', 'InstanceId', 'VpcId', 'SubnetId', 'CreateTime',
+     'InstanceType', 'Engine', 'EngineVersion', 'Runtime', 'Handler'].forEach(k => {
+      if (item[k]) extra[k] = typeof item[k] === 'object' ? item[k].Name || JSON.stringify(item[k]) : item[k];
+    });
+
+    return {
+      id: uuidv4(), arn: '',
+      resourceType: fmt.type, service: fmt.service,
+      resourceId, name: name || resourceId,
+      region, accountId,
+      rawTags, proposedTags: {}, confidence: 0, status: 'pending',
+      notes: Object.keys(extra).length ? JSON.stringify(extra) : '',
+    };
+  }
+
+  // ── EC2 Instance (InstanceId senza VolumeId) ──────────────────────────────
+  if (item.InstanceId) {
+    const rawTags = extractTagsFromItem(item);
+    const name = nameFromTags(rawTags) || item.InstanceId;
+    return {
+      id: uuidv4(), arn: '',
+      resourceType: 'AWS::EC2::Instance', service: 'EC2',
+      resourceId: item.InstanceId, name,
+      region: item.Placement?.AvailabilityZone?.slice(0, -1) || item.Region || '',
+      accountId: item.OwnerId || '',
+      rawTags, proposedTags: {}, confidence: 0, status: 'pending',
+      notes: JSON.stringify({ State: item.State?.Name, InstanceType: item.InstanceType }),
+    };
+  }
+
+  // ── Fallback generico: cerca qualsiasi campo *Id o *Name ─────────────────
+  const idKey = Object.keys(item).find(k => /Id$/.test(k) && typeof item[k] === 'string' && item[k]);
+  const nameKey = Object.keys(item).find(k => /Name$/.test(k) && typeof item[k] === 'string' && item[k]);
+  const resourceId = idKey ? item[idKey] : (nameKey ? item[nameKey] : uuidv4());
+  const rawTags = extractTagsFromItem(item);
   return {
-    id: uuidv4(),
-    arn,
-    resourceType: type,
-    service: extractService(type),
-    resourceId: extractResourceId(arn) || name,
-    name,
-    region,
-    accountId,
-    rawTags,
-    proposedTags: {},
-    confidence: 0,
-    status: 'pending',
-    notes: '',
+    id: uuidv4(), arn: '',
+    resourceType: 'Unknown', service: 'Unknown',
+    resourceId, name: (nameKey ? item[nameKey] : resourceId),
+    region: item.Region || item.region || '',
+    accountId: item.AccountId || item.OwnerId || '',
+    rawTags, proposedTags: {}, confidence: 0, status: 'pending', notes: '',
   };
 }
 

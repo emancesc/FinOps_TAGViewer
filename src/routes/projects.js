@@ -51,8 +51,16 @@ router.get('/:id', async (req, res) => {
     );
     if (!records.length) return res.status(404).json({ error: 'Progetto non trovato' });
     const rec = records[0];
+    const props = rec.get('p').properties;
+    let columnConfig = null;
+    if (props.columnConfig) {
+      try { columnConfig = JSON.parse(props.columnConfig); } catch (_) {}
+    }
     res.json({
-      ...rec.get('p').properties,
+      ...props,
+      columnConfig,
+      promptTemplate: props.promptTemplate || null,
+      taggingTargetFile: props.taggingTargetFile || null,
       resourceCount: rec.get('resourceCount').toNumber(),
       documentCount: rec.get('documentCount').toNumber(),
     });
@@ -77,6 +85,33 @@ router.patch('/:id', async (req, res) => {
     );
     if (!records.length) return res.status(404).json({ error: 'Progetto non trovato' });
     res.json(records[0].get('p').properties);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/projects/:id/column-config
+router.patch('/:id/column-config', async (req, res) => {
+  const { columnConfig, promptTemplate, taggingTargetFile } = req.body;
+  if (!columnConfig && !promptTemplate && !taggingTargetFile) {
+    return res.status(400).json({ error: 'Nessun campo da aggiornare' });
+  }
+  try {
+    const records = await runQuery(
+      `MATCH (p:Project {id: $id})
+       SET p.columnConfig = $columnConfig,
+           p.promptTemplate = $promptTemplate,
+           p.taggingTargetFile = $taggingTargetFile
+       RETURN p`,
+      {
+        id: req.params.id,
+        columnConfig: columnConfig ? JSON.stringify(columnConfig) : null,
+        promptTemplate: promptTemplate || null,
+        taggingTargetFile: taggingTargetFile || null,
+      }
+    );
+    if (!records.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

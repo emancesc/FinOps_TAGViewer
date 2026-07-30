@@ -1,6 +1,15 @@
 import { Router } from 'express';
+import fs from 'fs/promises';
+import path from 'path';
 import { runQuery } from '../services/db.js';
 import { tagAllResources, tagSingleResource, getTaggingProgress } from '../services/tagger.js';
+import {
+  detectXlsxColumns,
+  runXlsxTagging,
+  getXlsxTaggingProgress,
+  getXlsxOutputPath,
+  extractFileText,
+} from '../services/xlsxTagger.js';
 
 const router = Router();
 
@@ -98,6 +107,99 @@ router.patch('/:projectId/resource/:resourceId/confirm', async (req, res) => {
     res.json(records[0].get('r').properties);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/tagging/:projectId/detect-columns
+router.post('/:projectId/detect-columns', async (req, res) => {
+  const { storedAs } = req.body;
+  if (!storedAs) return res.status(400).json({ error: 'storedAs obbligatorio' });
+  try {
+    const result = await detectXlsxColumns(`uploads/${storedAs}`);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/tagging/:projectId/run-xlsx — avvia tagging XLSX
+router.post('/:projectId/run-xlsx', async (req, res) => {
+  const { projectId } = req.params;
+  try {
+    const projRecords = await runQuery(`MATCH (p:Project {id: $id}) RETURN p`, { id: projectId });
+    if (!projRecords.length) return res.status(404).json({ error: 'Progetto non trovato' });
+
+    const proj = projRecords[0].get('p').properties;
+    let columnConfig = {};
+    try { columnConfig = JSON.parse(proj.columnConfig || '{}'); } catch (_) {}
+    const promptTemplate = proj.promptTemplate || '';
+    const llmProvider = proj.llmProvider || process.env.LLM_PROVIDER || 'claude';
+    const taggingTargetFile = proj.taggingTargetFile || '';
+
+    if (!taggingTargetFile) return res.status(400).json({ error: 'Nessun file XLSX target configurato' });
+
+    // Load context documents
+    const docRecords = await runQuery(
+      `MATCH (p:Project {id: $id})-[:HAS_DOCUMENT]->(d:Document)
+       WHERE d.type IN ['guideline', 'assessment'] RETURN d`,
+      { id: projectId }
+    );
+
+    const contextDocTexts = [];
+    for (const rec of docRecords) {
+      const doc = rec.get('d').properties;
+      if (!doc.storedAs) continue;
+      try {
+        const text = await extractFileText(`uploads/${doc.storedAs}`);
+        contextDocTexts.push(`[${doc.filename}]\n${text}`);
+      } catch (err) {
+        console.warn(`[tagging] Errore lettura doc ${doc.storedAs}:`, err.message);
+      }
+    }
+
+    const config = { ...columnConfig, filePath: `uploads/${taggingTargetFile}` };
+
+    res.json({ status: 'started' });
+
+    runXlsxTagging(projectId, config, llmProvider, promptTemplate, contextDocTexts)
+      .catch(err => console.error(`[xlsxTagger] error per ${projectId}:`, err.message));
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/tagging/:projectId/progress-xlsx — SSE stream progresso XLSX
+router.get('/:projectId/progress-xlsx', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  res.write(': connected\n\n');
+
+  const emit = () => {
+    const p = getXlsxTaggingProgress(req.params.projectId);
+    res.write(`data: ${JSON.stringify(p || { status: 'idle' })}\n\n`);
+    if (p?.status === 'done' || p?.status === 'done_with_errors' || p?.status === 'error') {
+      clearInterval(iv);
+      setTimeout(() => res.end(), 2000);
+    }
+  };
+
+  emit();
+  const iv = setInterval(emit, 1500);
+  req.on('close', () => clearInterval(iv));
+});
+
+// GET /api/tagging/:projectId/result-xlsx — scarica il file XLSX taggato
+router.get('/:projectId/result-xlsx', async (req, res) => {
+  const filePath = getXlsxOutputPath(req.params.projectId);
+  try {
+    await fs.access(filePath);
+    res.download(path.resolve(filePath));
+  } catch {
+    res.status(404).json({ error: 'File non trovato' });
   }
 });
 

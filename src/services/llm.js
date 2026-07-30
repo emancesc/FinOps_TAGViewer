@@ -183,13 +183,62 @@ class BedrockLLM {
   }
 }
 
+// ---------------------------------------------------------------------------
+// GitHub Models (Claude via GitHub PAT — gratuito)
+// ---------------------------------------------------------------------------
+class GitHubModelsLLM {
+  _getClient() {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) throw new Error('GITHUB_TOKEN non configurato nel .env');
+    return new AzureOpenAI({
+      endpoint: 'https://models.inference.ai.azure.com',
+      apiKey: token,
+      apiVersion: '',   // GitHub Models non usa apiVersion
+      defaultHeaders: { 'Authorization': `Bearer ${token}` },
+    });
+  }
+
+  _model() {
+    return process.env.GITHUB_MODEL || 'claude-3-7-sonnet';
+  }
+
+  async complete(systemPrompt, userMessage) {
+    const client = this._getClient();
+    const response = await client.chat.completions.create({
+      model: this._model(),
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      max_tokens: 4096,
+    });
+    return response.choices[0].message.content;
+  }
+
+  async *streamChat(systemPrompt, messages) {
+    const client = this._getClient();
+    const stream = await client.chat.completions.create({
+      model: this._model(),
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      max_tokens: 4096,
+      stream: true,
+    });
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content;
+      if (text) yield text;
+    }
+  }
+}
+
 const _claude = new ClaudeLLM();
 const _azure = new AzureOpenAILLM();
 const _bedrock = new BedrockLLM();
+const _github = new GitHubModelsLLM();
 
 export function getLLM(provider) {
   const p = provider || process.env.LLM_PROVIDER || 'claude';
   if (p === 'azure-openai') return _azure;
   if (p === 'bedrock') return _bedrock;
+  if (p === 'github') return _github;
   return _claude;
 }

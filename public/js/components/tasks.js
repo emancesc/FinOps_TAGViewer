@@ -34,13 +34,13 @@ const _activeSources = new Map(); // projectId → EventSource
 // ---------------------------------------------------------------------------
 // API pubblica
 // ---------------------------------------------------------------------------
-window.startProgressWatch = function(projectId, projectName) {
+window.startProgressWatch = function(projectId, projectName, sseUrl) {
   if (_activeSources.has(projectId)) return; // già in ascolto
 
   showFab();
   addJobCard(projectId, projectName);
 
-  const es = new EventSource(`/api/tagging/${projectId}/progress`);
+  const es = new EventSource(sseUrl || `/api/tagging/${projectId}/progress`);
   _activeSources.set(projectId, es);
 
   es.onmessage = (e) => {

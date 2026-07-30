@@ -46,6 +46,13 @@ window.api = {
   retagResource:     (pid, rid, guidance) => req('POST', `/api/tagging/${pid}/resource/${rid}`, { guidance }),
   confirmTags:       (pid, rid, tags)     => req('PATCH', `/api/tagging/${pid}/resource/${rid}/confirm`, { tags }),
 
+  // XLSX Tagging
+  detectColumns:     (pid, storedAs) => req('POST', `/api/tagging/${pid}/detect-columns`, { storedAs }),
+  saveColumnConfig:  (pid, data) => fetch(`/api/projects/${pid}/column-config`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) }).then(r => r.json()),
+  runXlsxTagging:    (pid)     => req('POST', `/api/tagging/${pid}/run-xlsx`, {}),
+  getXlsxProgress:   (pid)     => `/api/tagging/${pid}/progress-xlsx`,
+  getXlsxResultUrl:  (pid)     => `/api/tagging/${pid}/result-xlsx`,
+
   // Export
   getXlsxUrl:        (pid)     => `/api/export/${pid}/xlsx`,
   getSummaryUrl:     (pid)     => `/api/export/${pid}/summary`,
