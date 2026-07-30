@@ -18,13 +18,16 @@ export async function initDb() {
 async function createConstraints() {
   const session = driver.session();
   try {
+    // Rimuovi vecchio constraint ARN (non univoco: assessment nodes hanno arn='')
+    await session.run('DROP CONSTRAINT resource_arn IF EXISTS').catch(() => {});
+
     const stmts = [
       'CREATE CONSTRAINT project_id IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE',
       'CREATE CONSTRAINT resource_id IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE',
       'CREATE CONSTRAINT document_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE',
     ];
     for (const s of stmts) {
-      await session.run(s).catch(() => {}); // ignora se esiste già
+      await session.run(s).catch(() => {});
     }
   } finally {
     await session.close();

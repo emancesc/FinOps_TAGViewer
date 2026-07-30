@@ -22,34 +22,36 @@ function setProgress(projectId, patch) {
 // Ingestion
 // ---------------------------------------------------------------------------
 export async function ingestResources(projectId, resources) {
-  for (const r of resources) {
+  const BATCH = 100;
+  for (let i = 0; i < resources.length; i += BATCH) {
+    const chunk = resources.slice(i, i + BATCH).map(r => ({
+      id: r.id,
+      arn: r.arn || '',
+      resourceType: r.resourceType || '',
+      service: r.service || '',
+      resourceId: r.resourceId || '',
+      name: r.name || '',
+      region: r.region || '',
+      accountId: r.accountId || '',
+      rawTags: JSON.stringify(r.rawTags || {}),
+      proposedTags: JSON.stringify(r.proposedTags || {}),
+      confidence: r.confidence || 0,
+      status: r.status || 'pending',
+      notes: r.notes || '',
+      nodeType: r.nodeType || 'delivery',
+    }));
     await runQuery(
       `MATCH (p:Project {id: $projectId})
-       MERGE (r:Resource {id: $id})
-       SET r.arn = $arn, r.resourceType = $resourceType, r.service = $service,
-           r.resourceId = $resourceId, r.name = $name, r.region = $region,
-           r.accountId = $accountId, r.rawTags = $rawTags,
-           r.proposedTags = $proposedTags, r.confidence = $confidence,
-           r.status = $status, r.notes = $notes, r.projectId = $projectId,
-           r.nodeType = $nodeType
+       UNWIND $resources AS row
+       MERGE (r:Resource {id: row.id})
+       SET r.arn = row.arn, r.resourceType = row.resourceType, r.service = row.service,
+           r.resourceId = row.resourceId, r.name = row.name, r.region = row.region,
+           r.accountId = row.accountId, r.rawTags = row.rawTags,
+           r.proposedTags = row.proposedTags, r.confidence = row.confidence,
+           r.status = row.status, r.notes = row.notes, r.projectId = $projectId,
+           r.nodeType = row.nodeType
        MERGE (p)-[:HAS_RESOURCE]->(r)`,
-      {
-        projectId,
-        id: r.id,
-        arn: r.arn || '',
-        resourceType: r.resourceType || '',
-        service: r.service || '',
-        resourceId: r.resourceId || '',
-        name: r.name || '',
-        region: r.region || '',
-        accountId: r.accountId || '',
-        rawTags: JSON.stringify(r.rawTags || {}),
-        proposedTags: JSON.stringify(r.proposedTags || {}),
-        confidence: r.confidence || 0,
-        status: r.status || 'pending',
-        notes: r.notes || '',
-        nodeType: r.nodeType || 'delivery',
-      }
+      { projectId, resources: chunk }
     );
   }
 }

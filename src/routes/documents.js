@@ -56,6 +56,7 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
        CREATE (d:Document {
          id: $docId, projectId: $projectId, type: $docType,
          filename: $filename, storedAs: $storedAs,
+         content: $content,
          resourceCount: $resourceCount, uploadedAt: datetime()
        })
        CREATE (p)-[:HAS_DOCUMENT]->(d)`,
@@ -63,6 +64,7 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
         projectId, docId, docType,
         filename: req.file.originalname,
         storedAs: req.file.filename,
+        content: content.slice(0, 50_000),
         resourceCount: resources?.length ?? 0,
       }
     );

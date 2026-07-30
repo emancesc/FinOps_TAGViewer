@@ -321,9 +321,10 @@ async function parseAssessmentXlsx(filePath) {
     const typeRaw = typeColIdx > 0 ? row.getCell(typeColIdx).value : null;
     const typeVal = typeRaw !== null && typeRaw !== undefined ? String(typeRaw).trim() : '';
 
+    const resId = uuidv4();
     assessmentResources.push({
-      id: uuidv4(),
-      arn: '',
+      id: resId,
+      arn: `assessment:${resId}`,
       resourceType: typeVal || 'OnPrem::Resource',
       service: typeVal ? (typeVal.split('::')[0] || 'OnPrem') : 'OnPrem',
       resourceId: nameVal,
