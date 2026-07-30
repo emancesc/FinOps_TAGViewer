@@ -102,7 +102,7 @@ export async function tagAllResources(project) {
   });
 
   const { guidelineCtx, assessmentCtx } = await loadDocumentContexts(projectId);
-  const llm = getLLM(project.llmProvider);
+  const llm = getLLM(project.llmProvider, project.ollamaModel);
 
   for (let i = 0; i < resources.length; i += BATCH_SIZE) {
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
@@ -169,7 +169,7 @@ export async function tagSingleResource(project, resourceId, guidance = '') {
     assessmentCtx
   );
 
-  const llm = getLLM(project.llmProvider);
+  const llm = getLLM(project.llmProvider, project.ollamaModel);
   const responseText = await llm.complete('Sei un esperto FinOps AWS.', prompt);
   const updates = extractJsonArray(responseText);
   const upd = updates[0];

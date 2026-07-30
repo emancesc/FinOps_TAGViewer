@@ -18,7 +18,7 @@ router.get('/', async (_req, res) => {
 
 // POST /api/projects
 router.post('/', async (req, res) => {
-  const { name, accountId, region, llmProvider = process.env.LLM_PROVIDER || 'bedrock' } = req.body;
+  const { name, accountId, region, llmProvider = process.env.LLM_PROVIDER || 'bedrock', ollamaModel = '' } = req.body;
   if (!name || !accountId) return res.status(400).json({ error: 'name e accountId obbligatori' });
 
   const id = uuidv4();
@@ -26,10 +26,10 @@ router.post('/', async (req, res) => {
     const records = await runQuery(
       `CREATE (p:Project {
          id: $id, name: $name, accountId: $accountId,
-         region: $region, llmProvider: $llmProvider,
+         region: $region, llmProvider: $llmProvider, ollamaModel: $ollamaModel,
          createdAt: datetime(), status: 'active'
        }) RETURN p`,
-      { id, name, accountId, region: region || '', llmProvider }
+      { id, name, accountId, region: region || '', llmProvider, ollamaModel }
     );
     res.status(201).json(records[0].get('p').properties);
   } catch (e) {
@@ -71,7 +71,7 @@ router.get('/:id', async (req, res) => {
 
 // PATCH /api/projects/:id
 router.patch('/:id', async (req, res) => {
-  const allowed = ['name', 'llmProvider', 'status'];
+  const allowed = ['name', 'llmProvider', 'status', 'ollamaModel'];
   const updates = Object.fromEntries(
     Object.entries(req.body).filter(([k]) => allowed.includes(k))
   );

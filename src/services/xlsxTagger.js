@@ -102,9 +102,9 @@ export async function detectXlsxColumns(filePath) {
 }
 
 // ---------------------------------------------------------------------------
-// B) Run XLSX tagging
+// B) Run XLSX tagging — parallel workers
 // ---------------------------------------------------------------------------
-export async function runXlsxTagging(projectId, config, llmProvider, promptTemplate, contextDocTexts) {
+export async function runXlsxTagging(projectId, config, llmProvider, promptTemplate, contextDocTexts, ollamaModel) {
   const {
     filePath,
     sheetName,
@@ -114,15 +114,17 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
     contextColumns = [],
     tagColumns = [],
     noteColumns = [],
+    parallelWorkers: cfgWorkers,
   } = config;
+
+  const WORKERS = Math.max(1, Math.min(5,
+    parseInt(cfgWorkers ?? process.env.XLSX_PARALLEL_WORKERS ?? '1', 10) || 1
+  ));
 
   setXlsxProgress(projectId, {
     status: 'running',
-    total: 0,
-    processed: 0,
-    batch: 0,
-    batchTotal: 0,
-    errors: [],
+    total: 0, processed: 0, batch: 0, batchTotal: 0,
+    workers: WORKERS, errors: [],
     startedAt: Date.now(),
     llmProvider,
   });
@@ -138,14 +140,13 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
       totalLen += chunk.length;
     }
 
-    // Leggi con SheetJS (tollerante a tutte le estensioni Excel)
+    // Leggi con SheetJS
     const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
     if (!wb.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" non trovato`);
     const wsRaw = wb.Sheets[sheetName];
     const aoa = XLSX.utils.sheet_to_json(wsRaw, { header: 1, defval: '' });
     if (aoa.length < 2) throw new Error('Foglio vuoto o senza dati');
 
-    // Build column index map (0-based)
     const headers = aoa[0].map(h => String(h ?? '').trim());
     const colMap = {};
     headers.forEach((h, i) => { if (h) colMap[h] = i; });
@@ -156,19 +157,18 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
     for (let r = 1; r < aoa.length; r++) {
       const row = aoa[r];
       if (taggableColIdx < 0) continue;
-      const cellVal = String(row[taggableColIdx] ?? '').trim();
-      if (cellVal.toLowerCase() !== (taggableValue || 'Y').toLowerCase()) continue;
+      if (String(row[taggableColIdx] ?? '').trim().toLowerCase() !== (taggableValue || 'Y').toLowerCase()) continue;
       const cells = {};
       [...identifierColumns, ...contextColumns, ...tagColumns, ...noteColumns].forEach(colName => {
         const idx = colMap[colName];
         if (idx !== undefined) cells[colName] = String(row[idx] ?? '');
       });
-      taggableRows.push({ rowNumber: r + 1, cells }); // rowNumber è 1-indexed come Excel
+      taggableRows.push({ rowNumber: r + 1, cells });
     }
 
     const total = taggableRows.length;
-    const batchTotal = Math.ceil(total / BATCH_SIZE);
-    setXlsxProgress(projectId, { total, batchTotal });
+    const totalBatches = Math.ceil(total / BATCH_SIZE);
+    setXlsxProgress(projectId, { total, batchTotal: totalBatches });
 
     if (total === 0) {
       setXlsxProgress(projectId, { status: 'done', endedAt: Date.now() });
@@ -176,79 +176,121 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
       return;
     }
 
-    // Build tag columns descriptor for prompt
+    // Prompt building helpers
     const tagColsList = tagColumns.map(tc => {
       const tagName = tc.replace(/^Tag:/i, '');
       const note = noteColumns.find(nc => nc.toLowerCase() === `${tagName}_note`.toLowerCase()) || '';
       return note ? { tag: tc, note } : { tag: tc };
     });
+    const tagColsListStr = JSON.stringify(tagColsList, null, 2);
 
-    const llm = getLLM(llmProvider);
+    const llm = getLLM(llmProvider, ollamaModel);
 
-    for (let i = 0; i < taggableRows.length; i += BATCH_SIZE) {
-      await waitIfPaused(projectId);
+    // Divide rows into WORKERS disjoint segments
+    const segments = Array.from({ length: WORKERS }, (_, w) => {
+      const start = Math.floor(w * total / WORKERS);
+      const end   = Math.floor((w + 1) * total / WORKERS);
+      return taggableRows.slice(start, end);
+    });
 
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const batch = taggableRows.slice(i, i + BATCH_SIZE);
-      setXlsxProgress(projectId, { batch: batchNum });
+    // Shared counters — safe without mutex (JS single-thread event loop)
+    let globalProcessed = 0;
+    let globalBatchesDone = 0;
 
-      // Row objects: identifiers + context only
-      const rowsJson = batch.map(r => {
-        const obj = { rowNumber: r.rowNumber };
-        [...identifierColumns, ...contextColumns].forEach(col => {
-          if (r.cells[col] !== undefined) obj[col] = r.cells[col];
+    // Worker: processes its segment, returns [{rowIdx, colIdx, value}]
+    const runWorker = async (wId, segment) => {
+      const updates = [];
+      let consecErrors = 0;
+
+      for (let i = 0; i < segment.length; i += BATCH_SIZE) {
+        await waitIfPaused(projectId);
+        if (_xlsxJobs.get(projectId)?.status === 'error') return updates; // aborted by another worker
+
+        const batch = segment.slice(i, i + BATCH_SIZE);
+
+        const rowsJson = batch.map(r => {
+          const obj = { rowNumber: r.rowNumber };
+          [...identifierColumns, ...contextColumns].forEach(col => {
+            if (r.cells[col] !== undefined) obj[col] = r.cells[col];
+          });
+          return obj;
         });
-        return obj;
-      });
 
-      const tagColsListStr = JSON.stringify(tagColsList, null, 2);
-      const resourcesJsonStr = JSON.stringify(rowsJson, null, 2);
+        const resourcesJsonStr = JSON.stringify(rowsJson, null, 2);
+        let userPrompt = (promptTemplate || '')
+          .replace('{{tag_columns_list}}', tagColsListStr)
+          .replace('{{context_documents}}', contextStr);
 
-      let userPrompt = (promptTemplate || '')
-        .replace('{{tag_columns_list}}', tagColsListStr)
-        .replace('{{context_documents}}', contextStr);
-
-      if (userPrompt.includes('{{resources_json}}')) {
-        userPrompt = userPrompt.replace('{{resources_json}}', resourcesJsonStr);
-      } else {
-        userPrompt += `\n\nCOLONNE TAG DA VALORIZZARE:\n${tagColsListStr}\n\nRISORSE DA TAGGARE (valorizza TUTTI i tag per ogni risorsa; usa "[?]" per valori incerti e spiega le opzioni nella colonna _note):\n${resourcesJsonStr}\n\nRestituisci un array JSON con questa struttura:\n[{"rowNumber": <N>, "tags": {"Tag:cineca:BusinessUnit": "valore", "cineca:BusinessUnit_note": "motivo", ...}}, ...]`;
-      }
-
-      let responseText;
-      try {
-        responseText = await llm.complete(SYSTEM_PROMPT, userPrompt);
-      } catch (err) {
-        console.error(`[xlsxTagger] batch ${batchNum}/${batchTotal} LLM error:`, err.message);
-        const job = _xlsxJobs.get(projectId);
-        setXlsxProgress(projectId, { errors: [...(job?.errors || []), `Batch ${batchNum}: ${err.message}`] });
-        continue;
-      }
-
-      const results = extractJsonArray(responseText);
-      for (const result of results) {
-        if (!result.rowNumber || !result.tags) continue;
-        const rowIdx = result.rowNumber - 1; // 0-based
-        for (const [colName, value] of Object.entries(result.tags)) {
-          const colIdx = colMap[colName];
-          if (colIdx === undefined) continue;
-          const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
-          wsRaw[cellRef] = { t: 's', v: String(value) };
+        if (userPrompt.includes('{{resources_json}}')) {
+          userPrompt = userPrompt.replace('{{resources_json}}', resourcesJsonStr);
+        } else {
+          userPrompt += `\n\nCOLONNE TAG DA VALORIZZARE:\n${tagColsListStr}\n\nRISORSE DA TAGGARE (usa "[?]" per valori incerti, spiega nella _note):\n${resourcesJsonStr}\n\nRestituisci SOLO un array JSON:\n[{"rowNumber":<N>,"tags":{"Tag:cineca:X":"val","cineca:X_note":"motivo",...}},...]`;
         }
-      }
 
-      const processed = Math.min(i + BATCH_SIZE, total);
-      const job2 = _xlsxJobs.get(projectId);
-      const elapsed = job2?.startedAt ? Date.now() - job2.startedAt : 0;
-      const rate = elapsed > 0 ? processed / elapsed : 0;
-      const etaMs = rate > 0 && processed < total ? Math.round((total - processed) / rate) : null;
-      setXlsxProgress(projectId, { processed, etaMs });
+        let responseText;
+        try {
+          responseText = await llm.complete(SYSTEM_PROMPT, userPrompt);
+          consecErrors = 0;
+        } catch (err) {
+          consecErrors++;
+          const job = _xlsxJobs.get(projectId);
+          const errs = [...(job?.errors || []), `W${wId}:${err.message.slice(0, 120)}`];
+          console.error(`[xlsxTagger] worker ${wId} err #${consecErrors}:`, err.message);
+          setXlsxProgress(projectId, { errors: errs });
+          // Abort the entire job after 3 consecutive failures (permanent errors)
+          if (consecErrors >= 3) {
+            setXlsxProgress(projectId, {
+              status: 'error',
+              errors: [...errs, `Abort dopo 3 errori consecutivi (worker ${wId})`],
+              endedAt: Date.now(),
+            });
+          }
+          globalBatchesDone++;
+          continue;
+        }
+
+        const results = extractJsonArray(responseText);
+        for (const result of results) {
+          if (!result.rowNumber || !result.tags) continue;
+          for (const [colName, value] of Object.entries(result.tags)) {
+            const colIdx = colMap[colName];
+            if (colIdx !== undefined)
+              updates.push({ rowIdx: result.rowNumber - 1, colIdx, value: String(value) });
+          }
+        }
+
+        globalProcessed = Math.min(globalProcessed + batch.length, total);
+        globalBatchesDone++;
+
+        const job2 = _xlsxJobs.get(projectId);
+        const elapsed = job2?.startedAt ? Date.now() - job2.startedAt : 1;
+        const rate = elapsed > 0 ? globalProcessed / elapsed : 0;
+        const etaMs = rate > 0 && globalProcessed < total ? Math.round((total - globalProcessed) / rate) : null;
+        setXlsxProgress(projectId, { processed: globalProcessed, batch: globalBatchesDone, etaMs });
+      }
+      return updates;
+    };
+
+    // Launch all workers in parallel
+    const allUpdates = await Promise.all(segments.map((seg, wId) => runWorker(wId, seg)));
+
+    // Check if aborted during parallel execution
+    if (_xlsxJobs.get(projectId)?.status === 'error') {
+      setTimeout(() => _xlsxJobs.delete(projectId), 15 * 60 * 1000);
+      return;
     }
 
-    // Aggiorna il range del foglio dopo le modifiche
+    // Merge all cell updates into wsRaw (sequential — no conflicts)
+    for (const updates of allUpdates) {
+      for (const { rowIdx, colIdx, value } of updates) {
+        const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+        wsRaw[cellRef] = { t: 's', v: value };
+      }
+    }
     XLSX.utils.sheet_add_aoa(wsRaw, [], { origin: -1 });
     XLSX.writeFile(wb, getXlsxOutputPath(projectId));
 
-    // Marca le risorse delivery nel grafo Neo4j
+    // Mark delivery resources in Neo4j
     try {
       await runQuery(
         `MATCH (p:Project {id: $projectId})-[:HAS_RESOURCE]->(r:Resource)
@@ -260,9 +302,9 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
       console.warn('[xlsxTagger] nodeType update warning:', dbErr.message);
     }
 
-    const job = _xlsxJobs.get(projectId);
+    const finalJob = _xlsxJobs.get(projectId);
     setXlsxProgress(projectId, {
-      status: job?.errors?.length > 0 ? 'done_with_errors' : 'done',
+      status: finalJob?.errors?.length > 0 ? 'done_with_errors' : 'done',
       endedAt: Date.now(),
     });
 

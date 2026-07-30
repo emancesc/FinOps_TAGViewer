@@ -102,7 +102,8 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 ### Pipeline XLSX Tagging (`tagging_target`)
 - **Configurazione colonne dinamica** per progetto: selezione foglio, colonna `Taggable`, checkbox set di colonne tag `cineca:*`, colonne note read-only
 - **Template prompt editabile** con placeholder `{{context_documents}}`, `{{tag_columns_list}}`, `{{resources_json}}`
-- Pipeline: legge XLSX → filtra righe `Taggable=Y` → batch 15 righe al LLM → compila colonne `cineca:*` e note → scarica XLSX completato
+- **Worker paralleli configurabili** (1–5): le righe taggabili vengono divise in segmenti disgiunti elaborati contemporaneamente — con 3 worker la velocità è ~3×; i risultati vengono scritti nel file XLSX solo al termine (no conflitti)
+- Pipeline: legge XLSX → filtra righe `Taggable=Y` → divide in N segmenti → N batch-loop paralleli → merge aggiornamenti celle → scrive XLSX completato
 - Progresso in tempo reale via SSE (stesso Task Widget)
 
 ### Tagging automatico LLM (via Neo4j)
@@ -117,6 +118,8 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 - Aggiornamento in tempo reale via SSE ogni 1.5 secondi
 - Per ogni job mostra: batch corrente (`N/M`), risorse processate, barra di avanzamento, tempo trascorso ed **ETA stimata** (`~Xm Ys`) calcolata dalla velocità media dei batch precedenti
 - **Pausa / Resume**: bottone ⏸ durante l'esecuzione; il processo si sospende tra un batch e l'altro (senza perdere lo stato) e riprende con ▶
+- **Worker paralleli**: icona ⚡ con conteggio quando il tagging usa più worker simultanei
+- **Early abort su errori permanenti**: dopo 3 errori LLM consecutivi (es. API key scaduta, credito esaurito) il processo si interrompe automaticamente invece di continuare tutti i batch
 - Errori per batch espandibili (dettaglio messaggio)
 - Stato finale: completato, completato con errori parziali, errore critico
 
@@ -174,11 +177,52 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 | Parsing PDF | `pdf-parse` |
 | Parsing DOCX | `mammoth` |
 | Parsing CSV | `csv-parse` |
-| XLSX read/write | `exceljs` |
+| XLSX read/write | `xlsx` (SheetJS) + `exceljs` (export colorato) |
+| Ollama | REST API nativa (`fetch`) — nessun SDK aggiuntivo |
 | Upload file | `multer` 2 |
 | Frontend | Vanilla JS (ES Modules, no bundler) |
 | Grafo 3D | `3d-force-graph` + `Three.js` via CDN |
 | UUID | `uuid` |
+
+---
+
+## Ollama — modello locale (opzione gratuita)
+
+Ollama permette di eseguire modelli LLM localmente senza API key né costi per token. È l'opzione consigliata in ambienti con restrizioni di rete o per test.
+
+### Installazione
+
+```bash
+# Windows / macOS / Linux: scarica da https://ollama.com/download
+# oppure su Linux:
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### Scarica un modello
+
+```bash
+# Modello consigliato per tagging (buon equilibrio velocità/qualità, 2 GB)
+ollama pull llama3.2
+
+# Alternativa più capace (4 GB)
+ollama pull qwen2.5-coder:7b
+
+# Verifica modelli disponibili
+ollama list
+```
+
+### Avvio
+
+Ollama si avvia automaticamente come servizio in background dopo l'installazione.  
+URL API: `http://localhost:11434` (configurabile con `OLLAMA_BASE_URL` nel `.env`)
+
+### Configurazione in TagsViewer
+
+1. Crea un nuovo progetto e seleziona **"Ollama (modello locale)"** come LLM provider
+2. Specifica il nome del modello (es. `llama3.2`)
+3. Tutti i tag e la chat useranno il modello locale — nessuna chiamata a servizi esterni
+
+> **Nota prestazioni**: i modelli locali sono più lenti dei modelli cloud. Con 3 worker paralleli e `llama3.2` su hardware moderno si ottengono ~5–10 righe/minuto. Modelli più piccoli (`tinyllama`, `phi3`) sono più veloci ma meno accurati per il tagging.
 
 ---
 

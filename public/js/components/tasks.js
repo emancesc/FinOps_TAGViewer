@@ -164,6 +164,7 @@ function jobCardHtml(projectId, projectName, d) {
       ${isActive ? `
         <div style="font-size:.78rem;color:var(--text-muted);margin:4px 0">
           Batch ${d.batch || 0}/${d.batchTotal || '?'} — ${d.processed || 0}/${d.total} risorse
+          ${d.workers > 1 ? `<span style="color:var(--accent);margin-left:6px">⚡ ${d.workers} worker paralleli</span>` : ''}
           ${d.currentNames?.length ? `<br><span style="opacity:.7">▸ ${d.currentNames.join(', ')}</span>` : ''}
         </div>
         <div class="task-progress-bar">

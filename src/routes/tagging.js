@@ -137,6 +137,7 @@ router.post('/:projectId/run-xlsx', async (req, res) => {
     try { columnConfig = JSON.parse(proj.columnConfig || '{}'); } catch (_) {}
     const promptTemplate = proj.promptTemplate || '';
     const llmProvider = proj.llmProvider || process.env.LLM_PROVIDER || 'claude';
+    const ollamaModel = proj.ollamaModel || '';
     const taggingTargetFile = proj.taggingTargetFile || '';
 
     if (!taggingTargetFile) return res.status(400).json({ error: 'Nessun file XLSX target configurato' });
@@ -164,7 +165,7 @@ router.post('/:projectId/run-xlsx', async (req, res) => {
 
     res.json({ status: 'started' });
 
-    runXlsxTagging(projectId, config, llmProvider, promptTemplate, contextDocTexts)
+    runXlsxTagging(projectId, config, llmProvider, promptTemplate, contextDocTexts, ollamaModel)
       .catch(err => console.error(`[xlsxTagger] error per ${projectId}:`, err.message));
 
   } catch (e) {

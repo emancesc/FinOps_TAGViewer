@@ -49,7 +49,7 @@ router.post('/:projectId', async (req, res) => {
       .join('\n---\n');
 
     const systemPrompt = CHAT_SYSTEM(project, resources, guidelineContext);
-    const llm = getLLM(project.llmProvider);
+    const llm = getLLM(project.llmProvider, project.ollamaModel);
 
     const messages = [
       ...history.slice(-10), // mantieni gli ultimi 10 scambi

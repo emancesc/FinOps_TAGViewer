@@ -230,15 +230,81 @@ class GitHubModelsLLM {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Ollama (modello locale — nessuna API key richiesta)
+// ---------------------------------------------------------------------------
+class OllamaLLM {
+  constructor(modelOverride) {
+    this._modelName = modelOverride || process.env.OLLAMA_MODEL || 'llama3.2';
+    this._baseUrl = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/$/, '');
+  }
+
+  async complete(systemPrompt, userMessage) {
+    const res = await fetch(`${this._baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this._modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        stream: false,
+      }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => res.statusText);
+      throw new Error(`Ollama ${res.status}: ${txt}`);
+    }
+    const data = await res.json();
+    return data.message?.content || '';
+  }
+
+  async *streamChat(systemPrompt, messages) {
+    const res = await fetch(`${this._baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this._modelName,
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        stream: true,
+      }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => res.statusText);
+      throw new Error(`Ollama ${res.status}: ${txt}`);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop(); // last incomplete line stays in buf
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.message?.content) yield obj.message.content;
+          if (obj.done) return;
+        } catch { /* ignore parse errors on partial lines */ }
+      }
+    }
+  }
+}
+
 const _claude = new ClaudeLLM();
 const _azure = new AzureOpenAILLM();
 const _bedrock = new BedrockLLM();
 const _github = new GitHubModelsLLM();
 
-export function getLLM(provider) {
+export function getLLM(provider, ollamaModel) {
   const p = provider || process.env.LLM_PROVIDER || 'claude';
   if (p === 'azure-openai') return _azure;
   if (p === 'bedrock') return _bedrock;
   if (p === 'github') return _github;
+  if (p === 'ollama') return new OllamaLLM(ollamaModel);
   return _claude;
 }

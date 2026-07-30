@@ -56,7 +56,7 @@ function projectCard(p) {
       <div class="project-card-meta">
         <span>Account: <strong>${esc(p.accountId)}</strong></span>
         <span>Regione: ${esc(p.region || '—')}</span>
-        <span>LLM: ${esc(p.llmProvider)}</span>
+        <span>LLM: ${esc(p.llmProvider)}${p.llmProvider === 'ollama' && p.ollamaModel ? ` (${esc(p.ollamaModel)})` : ''}</span>
       </div>
       <div class="project-card-footer">
         <span class="badge badge-confirmed">${confirmed} confermati</span>
@@ -104,9 +104,16 @@ function openCreateModal() {
         <div class="form-group">
           <label class="form-label">LLM provider</label>
           <select class="form-select" id="mLlm">
-            <option value="claude">Claude (Anthropic)</option>
+            <option value="claude">Claude (Anthropic API Key)</option>
+            <option value="bedrock">AWS Bedrock (Claude via SSO IAM)</option>
             <option value="azure-openai">Azure OpenAI (SSO / API Key)</option>
+            <option value="ollama">Ollama (modello locale — gratuito)</option>
           </select>
+        </div>
+        <div class="form-group" id="mOllamaGroup" style="display:none">
+          <label class="form-label">Modello Ollama</label>
+          <input class="form-input" id="mOllamaModel" placeholder="es. llama3.2, qwen2.5-coder:7b, mistral" value="llama3.2">
+          <small style="color:var(--text-muted)">Deve essere già scaricato con <code>ollama pull &lt;modello&gt;</code></small>
         </div>
       </div>
       <div class="modal-footer">
@@ -116,15 +123,19 @@ function openCreateModal() {
     </div>`;
   document.body.appendChild(overlay);
 
+  overlay.querySelector('#mLlm').addEventListener('change', e => {
+    overlay.querySelector('#mOllamaGroup').style.display = e.target.value === 'ollama' ? 'block' : 'none';
+  });
   overlay.querySelector('#mCancel').addEventListener('click', () => overlay.remove());
   overlay.querySelector('#mConfirm').addEventListener('click', async () => {
     const name = overlay.querySelector('#mName').value.trim();
     const accountId = overlay.querySelector('#mAccount').value.trim();
     const region = overlay.querySelector('#mRegion').value.trim();
     const llmProvider = overlay.querySelector('#mLlm').value;
+    const ollamaModel = llmProvider === 'ollama' ? (overlay.querySelector('#mOllamaModel').value.trim() || 'llama3.2') : '';
     if (!name || !accountId) { window.toast('Nome e Account ID obbligatori', 'error'); return; }
     try {
-      await window.api.createProject({ name, accountId, region, llmProvider });
+      await window.api.createProject({ name, accountId, region, llmProvider, ollamaModel });
       overlay.remove();
       window.toast('Progetto creato', 'success');
       await loadProjects();

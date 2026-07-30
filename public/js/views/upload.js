@@ -211,6 +211,7 @@ function renderColumnConfigPanel(projectId, detection, taggingTargetFile, savedP
   const sheetName = savedConfig.sheetName || sugg.sheetName || '';
   const taggableColumn = savedConfig.taggableColumn || sugg.taggableColumn || 'Taggable';
   const taggableValue = savedConfig.taggableValue || sugg.taggableValue || 'Y';
+  const parallelWorkers = savedConfig.parallelWorkers || 1;
 
   const allHeaders = detection?.allHeaders || [];
   const sheets = detection?.sheets || (sheetName ? [sheetName] : []);
@@ -276,7 +277,7 @@ function renderColumnConfigPanel(projectId, detection, taggingTargetFile, savedP
       <select class="form-select" id="cfgSheet">${sheetOptions}</select>
     </div>
 
-    <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
       <div>
         <label class="form-label">Colonna filtro (es. Taggable)</label>
         <input type="text" class="form-input" id="cfgTaggableCol" value="${escH(taggableColumn)}">
@@ -284,6 +285,11 @@ function renderColumnConfigPanel(projectId, detection, taggingTargetFile, savedP
       <div>
         <label class="form-label">Valore da taggare</label>
         <input type="text" class="form-input" id="cfgTaggableVal" value="${escH(taggableValue)}">
+      </div>
+      <div>
+        <label class="form-label">Worker paralleli (1–5)</label>
+        <input type="number" class="form-input" id="cfgParallelWorkers" min="1" max="5" value="${parallelWorkers}">
+        <small style="color:var(--text-muted)">Segmenti disgiunti in parallelo</small>
       </div>
     </div>
 
@@ -325,6 +331,7 @@ function renderColumnConfigPanel(projectId, detection, taggingTargetFile, savedP
       sheetName: document.getElementById('cfgSheet').value,
       taggableColumn: document.getElementById('cfgTaggableCol').value,
       taggableValue: document.getElementById('cfgTaggableVal').value,
+      parallelWorkers: Math.max(1, Math.min(5, parseInt(document.getElementById('cfgParallelWorkers').value, 10) || 1)),
       identifierColumns,
       contextColumns: [...document.querySelectorAll('#cfgContextCols .ctx-col-cb:checked')].map(c => c.value),
       tagColumns: [...document.querySelectorAll('#cfgTagCols .tag-col-cb:checked')].map(c => c.value),
