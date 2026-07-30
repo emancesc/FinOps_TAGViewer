@@ -1,0 +1,26 @@
+{
+  "name": "tagsviewer",
+  "version": "1.0.0",
+  "description": "AWS Resource Tags Viewer with Graph DB, LLM tagging and 3D visualization",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@azure/msal-node": "^2.13.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "mammoth": "^1.8.0",
+    "multer": "^2.2.0",
+    "neo4j-driver": "^5.20.0",
+    "openai": "^4.56.0",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^10.0.0"
+  }
+}
