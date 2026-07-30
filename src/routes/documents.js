@@ -69,6 +69,14 @@ router.post('/:projectId', upload.single('file'), async (req, res) => {
       }
     );
 
+    // Per tagging_target: salva subito il file sul progetto (senza aspettare "Salva Config")
+    if (docType === 'tagging_target') {
+      await runQuery(
+        `MATCH (p:Project {id: $projectId}) SET p.taggingTargetFile = $storedAs`,
+        { projectId, storedAs: req.file.filename }
+      );
+    }
+
     if (resources?.length) {
       await ingestResources(projectId, resources);
     }

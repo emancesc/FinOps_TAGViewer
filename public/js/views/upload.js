@@ -158,17 +158,11 @@ function setupUpload(projectId) {
       zone.querySelector('.upload-zone-text').innerHTML = 'Trascina qui o clicca per selezionare<br><small>JSON, CSV, PDF, DOCX, XLSX, TXT — max 50 MB</small>';
       fileInput.value = '';
 
-      // After tagging_target upload: auto-detect columns and show panel
+      // After tagging_target upload: re-render the whole view so the
+      // button gets the correct XLSX click handler (not just the text)
       if (docType === 'tagging_target' && result.storedAs) {
-        try {
-          const detection = await window.api.detectColumns(projectId, result.storedAs);
-          renderColumnConfigPanel(projectId, detection, result.storedAs, null);
-          // Update page button label
-          const btn = document.getElementById('btnRunTagging');
-          if (btn) btn.textContent = '▶ Avvia Tagging XLSX';
-        } catch (e) {
-          window.toast('Errore rilevamento colonne: ' + e.message, 'error');
-        }
+        await window.renderUpload(projectId);
+        return; // renderUpload calls loadDocuments/loadTaggingStatus internally
       }
 
       await loadDocuments(projectId);
