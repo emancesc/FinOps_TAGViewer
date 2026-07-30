@@ -43,6 +43,7 @@ router.get('/:projectId/progress', (req, res) => {
   });
   res.write(': connected\n\n');
 
+  let iv;
   const emit = () => {
     const p = getTaggingProgress(req.params.projectId);
     res.write(`data: ${JSON.stringify(p || { status: 'idle' })}\n\n`);
@@ -53,7 +54,7 @@ router.get('/:projectId/progress', (req, res) => {
   };
 
   emit();
-  const iv = setInterval(emit, 1500);
+  iv = setInterval(emit, 1500);
   req.on('close', () => clearInterval(iv));
 });
 
@@ -178,6 +179,7 @@ router.get('/:projectId/progress-xlsx', (req, res) => {
   });
   res.write(': connected\n\n');
 
+  let iv;
   const emit = () => {
     const p = getXlsxTaggingProgress(req.params.projectId);
     res.write(`data: ${JSON.stringify(p || { status: 'idle' })}\n\n`);
@@ -188,7 +190,7 @@ router.get('/:projectId/progress-xlsx', (req, res) => {
   };
 
   emit();
-  const iv = setInterval(emit, 1500);
+  iv = setInterval(emit, 1500);
   req.on('close', () => clearInterval(iv));
 });
 
