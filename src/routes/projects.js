@@ -18,7 +18,7 @@ router.get('/', async (_req, res) => {
 
 // POST /api/projects
 router.post('/', async (req, res) => {
-  const { name, accountId, region, llmProvider = 'claude' } = req.body;
+  const { name, accountId, region, llmProvider = process.env.LLM_PROVIDER || 'bedrock' } = req.body;
   if (!name || !accountId) return res.status(400).json({ error: 'name e accountId obbligatori' });
 
   const id = uuidv4();

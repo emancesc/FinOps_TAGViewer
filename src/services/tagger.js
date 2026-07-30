@@ -2,7 +2,21 @@ import { runQuery } from './db.js';
 import { getLLM } from './llm.js';
 import { TAG_RESOURCES_PROMPT } from '../prompts/tag_resources.js';
 
-const BATCH_SIZE = 20; // risorse per chiamata LLM
+const BATCH_SIZE = 20;
+
+// ---------------------------------------------------------------------------
+// Progress tracking (in-memory, per-project)
+// ---------------------------------------------------------------------------
+const _jobs = new Map();
+
+export function getTaggingProgress(projectId) {
+  return _jobs.get(projectId) || null;
+}
+
+function setProgress(projectId, patch) {
+  const current = _jobs.get(projectId) || {};
+  _jobs.set(projectId, { ...current, ...patch });
+}
 
 // ---------------------------------------------------------------------------
 // Ingestion
@@ -53,13 +67,17 @@ export async function ingestRelationships(projectId, relationships) {
 // Tagging LLM
 // ---------------------------------------------------------------------------
 export async function tagAllResources(project) {
-  // Carica risorse pending
+  const projectId = project.id;
+
   const records = await runQuery(
     `MATCH (p:Project {id: $id})-[:HAS_RESOURCE]->(r:Resource)
      WHERE r.status = 'pending' RETURN r`,
-    { id: project.id }
+    { id: projectId }
   );
-  if (!records.length) return;
+  if (!records.length) {
+    setProgress(projectId, { status: 'done', total: 0, processed: 0, errors: [], startedAt: Date.now(), endedAt: Date.now() });
+    return;
+  }
 
   const resources = records.map(rec => {
     const p = rec.get('r').properties;
@@ -67,18 +85,35 @@ export async function tagAllResources(project) {
              region: p.region, service: p.service, rawTags: JSON.parse(p.rawTags || '{}') };
   });
 
-  const { guidelineCtx, assessmentCtx } = await loadDocumentContexts(project.id);
+  const batchTotal = Math.ceil(resources.length / BATCH_SIZE);
+  setProgress(projectId, {
+    status: 'running',
+    total: resources.length,
+    processed: 0,
+    batch: 0,
+    batchTotal,
+    errors: [],
+    startedAt: Date.now(),
+    llmProvider: project.llmProvider,
+  });
+
+  const { guidelineCtx, assessmentCtx } = await loadDocumentContexts(projectId);
   const llm = getLLM(project.llmProvider);
 
-  // Processa in batch
   for (let i = 0; i < resources.length; i += BATCH_SIZE) {
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const batch = resources.slice(i, i + BATCH_SIZE);
+    setProgress(projectId, { batch: batchNum, currentNames: batch.map(r => r.name || r.id).slice(0, 5) });
+
     const prompt = TAG_RESOURCES_PROMPT(project, batch, guidelineCtx, assessmentCtx);
     let responseText;
     try {
       responseText = await llm.complete('Sei un esperto FinOps AWS.', prompt);
     } catch (err) {
-      console.error(`[tagger] batch ${i} fallito:`, err.message);
+      console.error(`[tagger] batch ${batchNum}/${batchTotal} fallito:`, err.message);
+      const job = _jobs.get(projectId);
+      const errors = [...(job?.errors || []), `Batch ${batchNum}: ${err.message}`];
+      setProgress(projectId, { errors });
       continue;
     }
 
@@ -98,7 +133,17 @@ export async function tagAllResources(project) {
         }
       );
     }
+    setProgress(projectId, { processed: Math.min(i + BATCH_SIZE, resources.length) });
   }
+
+  const job = _jobs.get(projectId);
+  setProgress(projectId, {
+    status: job?.errors?.length > 0 ? 'done_with_errors' : 'done',
+    endedAt: Date.now(),
+  });
+
+  // Auto-pulizia dopo 10 minuti
+  setTimeout(() => _jobs.delete(projectId), 10 * 60 * 1000);
 }
 
 export async function tagSingleResource(project, resourceId, guidance = '') {

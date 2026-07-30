@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1098.0",
+    "@aws-sdk/credential-providers": "^3.1098.0",
     "@azure/msal-node": "^2.13.0",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.6",

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { runQuery } from '../services/db.js';
-import { tagAllResources, tagSingleResource } from '../services/tagger.js';
+import { tagAllResources, tagSingleResource, getTaggingProgress } from '../services/tagger.js';
 
 const router = Router();
 
@@ -23,6 +23,29 @@ router.post('/:projectId/run', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/tagging/:projectId/progress — SSE stream progresso real-time
+router.get('/:projectId/progress', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  res.write(': connected\n\n');
+
+  const emit = () => {
+    const p = getTaggingProgress(req.params.projectId);
+    res.write(`data: ${JSON.stringify(p || { status: 'idle' })}\n\n`);
+    if (p?.status === 'done' || p?.status === 'done_with_errors' || p?.status === 'error') {
+      clearInterval(iv);
+      setTimeout(() => res.end(), 2000);
+    }
+  };
+
+  emit();
+  const iv = setInterval(emit, 1500);
+  req.on('close', () => clearInterval(iv));
 });
 
 // GET /api/tagging/:projectId/status — stato aggregato del tagging

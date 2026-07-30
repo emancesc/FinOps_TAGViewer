@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AzureOpenAI } from 'openai';
-import { PublicClientApplication, DeviceCodeRequest } from '@azure/msal-node';
+import { PublicClientApplication } from '@azure/msal-node';
+import { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { fromSSO } from '@aws-sdk/credential-providers';
 
 // ---------------------------------------------------------------------------
 // Stato globale token Azure (in-memory, non persistito)
@@ -121,9 +123,73 @@ class AzureOpenAILLM {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AWS Bedrock (Claude via SSO IAM)
+// ---------------------------------------------------------------------------
+class BedrockLLM {
+  _getClient() {
+    const region = process.env.BEDROCK_REGION || 'us-east-1';
+    const profile = process.env.AWS_PROFILE || 'idm-dev';
+    const credentials = fromSSO({ profile });
+    return new BedrockRuntimeClient({ region, credentials });
+  }
+
+  _modelId() {
+    return process.env.BEDROCK_MODEL_ID || 'anthropic.claude-sonnet-4-5';
+  }
+
+  async complete(systemPrompt, userMessage) {
+    const client = this._getClient();
+    const body = JSON.stringify({
+      anthropic_version: 'bedrock-2023-05-31',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    const cmd = new InvokeModelCommand({
+      modelId: this._modelId(),
+      contentType: 'application/json',
+      accept: 'application/json',
+      body,
+    });
+    const response = await client.send(cmd);
+    const parsed = JSON.parse(new TextDecoder().decode(response.body));
+    return parsed.content[0].text;
+  }
+
+  async *streamChat(systemPrompt, messages) {
+    const client = this._getClient();
+    const body = JSON.stringify({
+      anthropic_version: 'bedrock-2023-05-31',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages,
+    });
+    const cmd = new InvokeModelWithResponseStreamCommand({
+      modelId: this._modelId(),
+      contentType: 'application/json',
+      accept: 'application/json',
+      body,
+    });
+    const response = await client.send(cmd);
+    for await (const event of response.body) {
+      if (event.chunk?.bytes) {
+        const chunk = JSON.parse(new TextDecoder().decode(event.chunk.bytes));
+        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
+          yield chunk.delta.text;
+        }
+      }
+    }
+  }
+}
+
 const _claude = new ClaudeLLM();
 const _azure = new AzureOpenAILLM();
+const _bedrock = new BedrockLLM();
 
-export function getLLM(provider = 'claude') {
-  return provider === 'azure-openai' ? _azure : _claude;
+export function getLLM(provider) {
+  const p = provider || process.env.LLM_PROVIDER || 'claude';
+  if (p === 'azure-openai') return _azure;
+  if (p === 'bedrock') return _bedrock;
+  return _claude;
 }

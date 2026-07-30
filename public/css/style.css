@@ -250,6 +250,58 @@ tbody td { padding: 9px 12px; }
 .progress-bar { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--accent); transition: width .4s; }
 
+/* ── Task Progress Widget ── */
+.task-fab {
+  position: fixed; bottom: 24px; right: 24px; z-index: 1100;
+  background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text); border-radius: 24px; padding: 8px 16px;
+  cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-size: .85rem; font-weight: 600; box-shadow: var(--shadow);
+  transition: background .15s, transform .15s;
+}
+.task-fab:hover { background: var(--accent); color: #fff; transform: translateY(-2px); }
+.task-fab.open  { background: var(--accent); color: #fff; }
+.task-fab-spinner {
+  width: 12px; height: 12px; border: 2px solid currentColor;
+  border-top-color: transparent; border-radius: 50%;
+  animation: spin .6s linear infinite; display: inline-block;
+}
+
+.task-panel {
+  position: fixed; bottom: 72px; right: 24px; z-index: 1099;
+  width: 360px; max-height: 480px;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.task-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: .9rem; background: var(--bg3);
+}
+.task-panel-body {
+  overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+}
+
+.task-card { border-radius: var(--radius); overflow: hidden; }
+.task-card-inner {
+  padding: 10px 12px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.task-card-inner.done { border-color: transparent; opacity: .7; }
+.task-card-title {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px; font-size: .85rem;
+}
+.task-spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid var(--accent); border-top-color: transparent;
+  border-radius: 50%; animation: spin .6s linear infinite;
+}
+.task-progress-bar { height: 5px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.task-progress-fill { height: 100%; background: var(--accent); transition: width .5s; }
+
 /* ── Utility ── */
 .hidden     { display: none !important; }
 .text-muted { color: var(--text-muted); }

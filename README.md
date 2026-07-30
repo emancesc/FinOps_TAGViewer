@@ -1,6 +1,6 @@
 # TagsViewer — AWS Resource Tagging Graph
 
-Applicazione web leggera per la **governance del tagging AWS** basata su graph database. Permette di importare risorse da AWS Resource Explorer, applicare automaticamente i tag tramite LLM (Claude o Azure OpenAI), navigare le relazioni architetturali in un grafo 3D interattivo e produrre report di esportazione in formato XLSX e Markdown.
+Applicazione web leggera per la **governance del tagging AWS** basata su graph database. Permette di importare risorse da AWS Resource Explorer, applicare automaticamente i tag tramite LLM (Claude via AWS Bedrock, Azure OpenAI o Anthropic direct), navigare le relazioni architetturali in un grafo 3D interattivo e produrre report in formato XLSX e Markdown.
 
 ---
 
@@ -23,56 +23,59 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 ## Architettura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Browser (SPA)                        │
-│  ┌───────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Projects  │  │   Upload &   │  │   3D Graph View      │  │
-│  │  Manager  │  │   Tagging    │  │   (3d-force-graph    │  │
-│  │           │  │   Control    │  │    + Three.js)       │  │
-│  └───────────┘  └──────────────┘  └──────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────┐   │
-│  │         Chat Assistente FinOps (SSE streaming)        │   │
-│  └───────────────────────────────────────────────────────┘   │
-└────────────────────────────┬────────────────────────────────┘
-                             │ HTTP / SSE
-┌────────────────────────────▼────────────────────────────────┐
-│                   Node.js + Express API                      │
-│                                                              │
-│  /api/projects   /api/documents   /api/graph                 │
-│  /api/tagging    /api/chat        /api/export  /api/auth     │
-│                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │   Parser    │  │    Tagger    │  │    Exporter      │    │
-│  │ (JSON/CSV/  │  │ (batch LLM,  │  │ (ExcelJS XLSX,   │    │
-│  │  PDF/DOCX)  │  │  20 res/call)│  │  Markdown)       │    │
-│  └─────────────┘  └──────────────┘  └──────────────────┘    │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │                  LLM Abstraction                     │    │
-│  │  Claude (Anthropic SDK) │ Azure OpenAI + MSAL SSO   │    │
-│  └──────────────────────────────────────────────────────┘    │
-└────────────────────────────┬────────────────────────────────┘
-                             │ Bolt / neo4j+s
-┌────────────────────────────▼────────────────────────────────┐
-│                        Neo4j Graph DB                        │
-│   (:Project) ─[:HAS_RESOURCE]──► (:Resource)                 │
-│   (:Project) ─[:HAS_DOCUMENT]──► (:Document)                 │
-│   (:Resource)─[:DEPENDS_ON]────► (:Resource)                 │
-│   (:Resource)─[:PART_OF]───────► (:Resource)                 │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          Browser (SPA)                          │
+│  ┌───────────┐  ┌──────────────┐  ┌────────────────────────┐   │
+│  │ Projects  │  │   Upload &   │  │   3D Graph View        │   │
+│  │  Manager  │  │   Tagging    │  │   (3d-force-graph      │   │
+│  │           │  │   Control    │  │    + Three.js)         │   │
+│  └───────────┘  └──────────────┘  └────────────────────────┘   │
+│  ┌────────────────────────────┐  ┌──────────────────────────┐  │
+│  │  Chat Assistente FinOps    │  │  Task Progress Widget    │  │
+│  │  (SSE streaming)           │  │  (SSE real-time, float)  │  │
+│  └────────────────────────────┘  └──────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP / SSE
+┌──────────────────────────▼──────────────────────────────────────┐
+│                     Node.js + Express API                        │
+│                                                                  │
+│  /api/projects   /api/documents   /api/graph                     │
+│  /api/tagging    /api/chat        /api/export  /api/auth         │
+│                                                                  │
+│  ┌─────────────┐  ┌───────────────────┐  ┌──────────────────┐   │
+│  │   Parser    │  │      Tagger       │  │    Exporter      │   │
+│  │ (JSON/CSV/  │  │ (batch LLM 20/call│  │ (ExcelJS XLSX,   │   │
+│  │  PDF/DOCX)  │  │  progress tracker)│  │  Markdown)       │   │
+│  └─────────────┘  └───────────────────┘  └──────────────────┘   │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐   │
+│  │                     LLM Abstraction                       │   │
+│  │  AWS Bedrock (Claude, SSO IAM) │ Azure OpenAI + MSAL SSO │   │
+│  │  Anthropic direct (API Key)                               │   │
+│  └───────────────────────────────────────────────────────────┘   │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ Bolt / neo4j+s
+┌──────────────────────────▼──────────────────────────────────────┐
+│                       Neo4j Graph DB                             │
+│   (:Project) ─[:HAS_RESOURCE]──► (:Resource)                     │
+│   (:Project) ─[:HAS_DOCUMENT]──► (:Document)                     │
+│   (:Resource)─[:DEPENDS_ON]────► (:Resource)                     │
+│   (:Resource)─[:PART_OF]───────► (:Resource)                     │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Componenti principali
 
 | Componente | Responsabilità |
 |---|---|
-| **Express Router** | 7 router REST + SSE per lo streaming della chat |
+| **Express Router** | 7 router REST + SSE per chat e progress stream |
 | **Parser** | Normalizza JSON/CSV (Resource Explorer), PDF, DOCX, XLSX in strutture uniformi |
-| **Tagger** | Orchesta le chiamate LLM in batch da 20 risorse, scrive i risultati in Neo4j |
-| **LLM Service** | Astrazione su Claude (Anthropic SDK) e Azure OpenAI con device-code MSAL |
-| **Graph Service** | Query Cypher per nodi, archi e statistiche; espone i dati al frontend |
+| **Tagger** | Orchesta le chiamate LLM in batch da 20 risorse, traccia il progresso in memoria, scrive i risultati in Neo4j |
+| **LLM Service** | Astrazione su AWS Bedrock (SSO IAM), Claude (Anthropic SDK) e Azure OpenAI con device-code MSAL |
+| **Graph Service** | Query Cypher per nodi, archi e statistiche |
 | **Exporter** | Genera XLSX colorato per stato (ExcelJS) e Markdown riepilogativo |
 | **Chat SSE** | Stream asincrono della risposta LLM; applica automaticamente i tag aggiornati suggeriti nella risposta |
+| **Task Widget** | SSE floating panel che mostra avanzamento batch, errori e durata per ogni job di tagging in corso |
 | **3D Graph** | Rendering Three.js tramite `3d-force-graph`; click su nodo apre pannello di editing tag |
 
 ---
@@ -82,9 +85,10 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 ### Gestione Progetti
 - Crea un **progetto per ogni account AWS** (nome, Account ID, regione, LLM provider)
 - Dashboard con contatori per stato (pending / tagged / uncertain / confirmed) e barra di progresso
-- Cambia LLM provider per progetto in qualsiasi momento
+- Cambia LLM provider per progetto in qualsiasi momento via PATCH
 
 ### Importazione Documenti (3 tipi)
+
 | Tipo | Formato accettato | Cosa estrae |
 |---|---|---|
 | **Estrazione AWS Resource Explorer** | JSON, CSV | Risorse con ARN, tipo, regione, tag esistenti |
@@ -95,8 +99,15 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 - Processo in background, fire-and-forget
 - Batch da 20 risorse per chiamata LLM
 - Ogni risorsa riceve: tag proposti nel namespace `cineca:`, confidence score (0–1), stato, reasoning
-- Soglia di incertezza configurabile nel prompt (`uncertain` se confidence < 0.7)
+- Soglia di incertezza: `uncertain` se confidence < 0.7
 - **Re-tagging singola risorsa** con hint aggiuntivo dell'utente
+
+### Widget Task Progress (nuovo)
+- Pannello floating in basso a destra, visibile non appena il tagging parte
+- Aggiornamento in tempo reale via SSE ogni 1.5 secondi
+- Per ogni job mostra: batch corrente (`N/M`), risorse processate, nomi in elaborazione, barra di avanzamento, tempo trascorso
+- Errori per batch espandibili (dettaglio messaggio di errore)
+- Stato finale: ✅ completato, ⚠ completato con errori parziali, ❌ errore critico
 
 ### Grafo 3D interattivo
 - Force-directed graph 3D con Three.js (`3d-force-graph`)
@@ -117,9 +128,17 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 - **XLSX**: un foglio per tutte le risorse, un tag per colonna, colorazione per stato, foglio riepilogativo
 - **Markdown**: documento raggruppato per servizio AWS con tag, confidence, reasoning e metadati di progetto
 
-### Autenticazione Azure OpenAI (SSO)
-- Device-code flow MSAL: l'utente apre `microsoft.com/devicelogin`, inserisce il codice e si autentica con le credenziali aziendali
-- Il token viene catturato automaticamente e usato per tutte le chiamate Azure OpenAI successive
+### Autenticazione LLM
+
+**AWS Bedrock (consigliato — SSO IAM)**
+- Usa i profili AWS CLI configurati con AWS IAM Identity Center (SSO)
+- Nessuna API key da gestire: le credenziali sono rinnovate automaticamente dal ciclo SSO aziendale
+- Prima dell'uso, rinnovare la sessione: `aws sso login --profile <profile>`
+- Endpoint per verificare lo stato: `GET /api/auth/bedrock/status`
+
+**Azure OpenAI (device-code MSAL)**
+- L'utente apre `microsoft.com/devicelogin`, inserisce il codice e si autentica con le credenziali aziendali
+- Il token viene catturato automaticamente e usato per tutte le chiamate successive
 - Alternativa: API Key diretta nella variabile d'ambiente
 
 ---
@@ -131,8 +150,9 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 | Runtime | Node.js 20+ (ES Modules) |
 | Web framework | Express 4 |
 | Graph DB | Neo4j 5 (Community / AuraDB Free) |
-| LLM - Claude | `@anthropic-ai/sdk` |
-| LLM - Azure | `openai` SDK (Azure-compatible) + `@azure/msal-node` |
+| LLM — Bedrock | `@aws-sdk/client-bedrock-runtime` + `@aws-sdk/credential-providers` |
+| LLM — Claude | `@anthropic-ai/sdk` |
+| LLM — Azure | `openai` SDK (Azure-compatible) + `@azure/msal-node` |
 | Parsing PDF | `pdf-parse` |
 | Parsing DOCX | `mammoth` |
 | Parsing CSV | `csv-parse` |
@@ -147,11 +167,12 @@ Applicazione web leggera per la **governance del tagging AWS** basata su graph d
 
 - **Node.js** 20 o superiore (`node --version`)
 - **Neo4j** in una delle configurazioni:
-  - **Locale**: [Neo4j Desktop](https://neo4j.com/download/) (Community Edition inclusa) — URI: `bolt://localhost:7687`
+  - **Locale**: Neo4j Community Edition — URI: `bolt://localhost:7687`
   - **Cloud**: [AuraDB Free](https://neo4j.com/cloud/platform/aura-graph-database/) — URI: `neo4j+s://xxxxxxxx.databases.neo4j.io`
 - Almeno uno tra:
+  - **AWS CLI** configurato con SSO (profilo con permessi `bedrock:InvokeModel`) — opzione consigliata
   - **Anthropic API Key** — da [console.anthropic.com](https://console.anthropic.com)
-  - **Azure OpenAI** endpoint (API Key o credenziali SSO aziendali)
+  - **Azure OpenAI** endpoint (API Key o credenziali SSO aziendali via MSAL)
 
 ---
 
@@ -172,19 +193,17 @@ npm install
 
 ### 3. Configura Neo4j
 
-**Opzione A — Neo4j Desktop (locale, raccomandato per sviluppo)**
+**Opzione A — Neo4j locale**
 
-1. Scarica e installa [Neo4j Desktop](https://neo4j.com/download/)
-2. Crea un nuovo progetto e avvia un database locale
+1. Installa Neo4j Community Edition
+2. Avvia il database (porta Bolt: 7687)
 3. Imposta la password che userai nel file `.env`
-4. Verifica che il database sia in stato **Running** (porta Bolt: 7687)
 
-**Opzione B — AuraDB Free (cloud, zero infrastruttura)**
+**Opzione B — AuraDB Free (cloud)**
 
 1. Registrati su [neo4j.com/cloud](https://neo4j.com/cloud/platform/aura-graph-database/)
-2. Crea una istanza Free (200k nodi, 400k relazioni)
-3. Scarica il file di credenziali generato alla creazione
-4. Usa l'URI `neo4j+s://...` nel file `.env`
+2. Crea una istanza Free
+3. Usa l'URI `neo4j+s://...` nel file `.env`
 
 ### 4. Configura le variabili d'ambiente
 
@@ -205,57 +224,70 @@ Copia `.env.example` in `.env` e compila i valori:
 PORT=3000
 
 # ── Neo4j ──────────────────────────────────────────────────────────
-# Locale:
 NEO4J_URI=bolt://localhost:7687
-# AuraDB Free (cloud):
-# NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io
-
+# NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io  # AuraDB
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=la_tua_password_neo4j
 
-# ── Claude (Anthropic) ─────────────────────────────────────────────
-ANTHROPIC_API_KEY=sk-ant-...
+# ── LLM provider default (per nuovi progetti) ──────────────────────
+# Valori: 'bedrock' | 'claude' | 'azure-openai'
+LLM_PROVIDER=bedrock
+
+# ── AWS Bedrock (Claude via SSO IAM) ───────────────────────────────
+# Profilo AWS CLI configurato con SSO (aws configure sso)
+AWS_PROFILE=nome-profilo
+# Regione Bedrock (Bedrock non disponibile in tutte le regioni — usare us-east-1 o eu-west-1)
+BEDROCK_REGION=us-east-1
+# Modello Claude su Bedrock
+BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
+
+# ── Claude Anthropic (API Key diretta) ─────────────────────────────
+# ANTHROPIC_API_KEY=sk-ant-...
 
 # ── Azure OpenAI ───────────────────────────────────────────────────
 # Metodo 1: API Key diretta
-AZURE_OPENAI_ENDPOINT=https://YOUR_RESOURCE.openai.azure.com
-AZURE_OPENAI_API_KEY=your_azure_openai_key
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
+# AZURE_OPENAI_ENDPOINT=https://YOUR_RESOURCE.openai.azure.com
+# AZURE_OPENAI_API_KEY=your_azure_openai_key
+# AZURE_OPENAI_DEPLOYMENT=gpt-4o
 
-# Metodo 2: SSO via MSAL (device-code) — lascia API_KEY vuota
-AZURE_TENANT_ID=your-tenant-id
-AZURE_CLIENT_ID=your-client-app-id
-AZURE_OPENAI_SCOPE=https://cognitiveservices.azure.com/.default
+# Metodo 2: SSO via MSAL device-code (lascia API_KEY vuota)
+# AZURE_TENANT_ID=your-tenant-id
+# AZURE_CLIENT_ID=your-client-app-id
+# AZURE_OPENAI_SCOPE=https://cognitiveservices.azure.com/.default
 ```
 
-> **Nota**: non è necessario configurare entrambi i provider. Il provider viene scelto per ogni progetto nell'interfaccia.
+> Non è necessario configurare tutti i provider. Il provider viene scelto per ogni progetto e può essere cambiato in qualsiasi momento.
 
 ---
 
 ## Avvio
 
-### Modalità produzione
+### 1. (Solo Bedrock) Rinnova la sessione SSO AWS
 
 ```bash
-node server.js
+aws sso login --profile nome-profilo
 ```
 
-### Modalità sviluppo (ricarica automatica su salvataggio)
+### 2. Avvia il server
 
 ```bash
+# Produzione
+node server.js
+
+# Sviluppo (ricarica su salvataggio)
 node --watch server.js
 ```
 
 Apri il browser su `http://localhost:3000`
 
-### Output atteso all'avvio
+### Output atteso
 
 ```
 Neo4j connected
 TagsViewer running at http://localhost:3000
 ```
 
-Se Neo4j non è raggiungibile, il server stampa un errore di connessione e si interrompe.
+> La sessione SSO AWS scade periodicamente (tipicamente 8–12 ore). Quando il tagging inizia a fallire, riesegui `aws sso login`.
 
 ---
 
@@ -270,7 +302,7 @@ Se Neo4j non è raggiungibile, il server stampa un errore di connessione e si in
          ↓
 3. Avvia Tagging LLM      → Bottone "▶ Avvia Tagging"
                             Elaborazione in background, batch da 20 risorse
-                            Aggiorna automaticamente stati e tag nel grafo
+                            Widget ⚙ (basso destra) mostra progresso in tempo reale
          ↓
 4. Esplora Grafo 3D       → Naviga, filtra per stato/servizio
                             Clicca nodo → modifica/conferma tag
@@ -281,27 +313,6 @@ Se Neo4j non è raggiungibile, il server stampa un errore di connessione e si in
                             aggiorna i tag direttamente nel grafo
          ↓
 6. Esporta                 → XLSX colorato + Markdown riepilogativo
-```
-
-### Autenticazione Azure OpenAI con SSO
-
-Se il progetto usa `azure-openai` e non è configurata `AZURE_OPENAI_API_KEY`:
-
-```bash
-# 1. Avvia il flow da terminale o chiama l'endpoint
-POST /api/auth/azure/start
-
-# Risposta:
-{
-  "userCode": "ABCD-1234",
-  "verificationUri": "https://microsoft.com/devicelogin",
-  "message": "Vai su https://microsoft.com/devicelogin e inserisci il codice ABCD-1234"
-}
-
-# 2. L'utente si autentica sul browser con le credenziali aziendali
-# 3. Il token viene acquisito automaticamente
-# 4. Verifica stato:
-GET /api/auth/azure/status
 ```
 
 ---
@@ -341,17 +352,28 @@ GET /api/auth/azure/status
 | Metodo | Path | Descrizione |
 |---|---|---|
 | POST | `/api/tagging/:projectId/run` | Avvia tagging LLM su tutte le risorse `pending` |
-| GET | `/api/tagging/:projectId/status` | Contatori `pending/tagged/uncertain/confirmed` |
+| GET | `/api/tagging/:projectId/progress` | **SSE** — progresso real-time (batch, count, errori) |
+| GET | `/api/tagging/:projectId/status` | Snapshot contatori `pending/tagged/uncertain/confirmed` |
 | POST | `/api/tagging/:projectId/resource/:resourceId` | Ri-tagga singola risorsa (body: `{ guidance }`) |
 | PATCH | `/api/tagging/:projectId/resource/:resourceId/confirm` | Conferma manuale tag (body: `{ tags }`) |
+
+**Formato eventi SSE progress**:
+```json
+{ "status": "running", "total": 120, "processed": 40, "batch": 2, "batchTotal": 6,
+  "currentNames": ["ec2-web-01","rds-main"], "startedAt": 1722330000000, "errors": [] }
+
+{ "status": "done", "total": 120, "processed": 120, "endedAt": 1722330240000, "errors": [] }
+
+{ "status": "done_with_errors", "processed": 100, "errors": ["Batch 3: timeout"] }
+```
 
 ### Chat (SSE)
 
 | Metodo | Path | Descrizione |
 |---|---|---|
-| POST | `/api/chat/:projectId` | Stream SSE della risposta LLM (body: `{ message, resourceIds?, history? }`) |
+| POST | `/api/chat/:projectId` | Stream SSE della risposta LLM (body: `{ message, history? }`) |
 
-**Formato eventi SSE**:
+**Formato eventi SSE chat**:
 ```
 data: {"type":"chunk","text":"..."}
 data: {"type":"graph_updated","count":3}
@@ -370,8 +392,10 @@ data: {"type":"error","message":"..."}
 
 | Metodo | Path | Descrizione |
 |---|---|---|
-| POST | `/api/auth/azure/start` | Avvia device-code flow MSAL |
-| GET | `/api/auth/azure/status` | Verifica stato autenticazione Azure |
+| POST | `/api/auth/azure/start` | Avvia device-code flow MSAL per Azure OpenAI |
+| GET | `/api/auth/azure/status` | Verifica stato token Azure |
+| GET | `/api/auth/bedrock/status` | Verifica sessione SSO AWS attiva |
+| POST | `/api/auth/bedrock/login` | Avvia `aws sso login` (apre browser) |
 
 ---
 
@@ -384,8 +408,8 @@ data: {"type":"error","message":"..."}
   id: String,           // UUID
   name: String,
   accountId: String,    // AWS Account ID (12 cifre)
-  region: String,       // es. eu-west-1
-  llmProvider: String,  // 'claude' | 'azure-openai'
+  region: String,       // es. eu-south-1
+  llmProvider: String,  // 'bedrock' | 'claude' | 'azure-openai'
   createdAt: DateTime,
   status: String        // 'active' | 'archived'
 })
@@ -402,7 +426,7 @@ data: {"type":"error","message":"..."}
   accountId: String,
   rawTags: String,      // JSON — tag originali da AWS
   proposedTags: String, // JSON — tag proposti da LLM
-  confidence: Float,    // 0.0 - 1.0
+  confidence: Float,    // 0.0 – 1.0
   status: String,       // 'pending' | 'tagged' | 'uncertain' | 'confirmed'
   notes: String         // reasoning LLM o note manuali
 })
@@ -455,21 +479,21 @@ FinOps_TAGViewer/
 │   │   ├── projects.js              # CRUD progetti
 │   │   ├── documents.js             # Upload e parsing documenti
 │   │   ├── graph.js                 # Query grafo Neo4j
-│   │   ├── tagging.js               # Orchestrazione tagging LLM
+│   │   ├── tagging.js               # Orchestrazione tagging LLM + SSE progress
 │   │   ├── chat.js                  # Chat SSE con contesto risorse
 │   │   ├── export.js                # Download XLSX e Markdown
-│   │   └── auth.js                  # MSAL device-code flow Azure
+│   │   └── auth.js                  # MSAL Azure + AWS SSO Bedrock
 │   │
 │   ├── services/
 │   │   ├── db.js                    # Neo4j driver, initDb, runQuery
 │   │   ├── parser.js                # Parse JSON/CSV/PDF/DOCX → risorse
-│   │   ├── llm.js                   # Astrazione Claude + Azure OpenAI
-│   │   ├── tagger.js                # Batch tagging + ingestion Neo4j
-│   │   └── exporter.js             # Generazione XLSX e Markdown
+│   │   ├── llm.js                   # Astrazione Bedrock + Claude + Azure OpenAI
+│   │   ├── tagger.js                # Batch tagging + progress tracker + ingestion
+│   │   └── exporter.js              # Generazione XLSX e Markdown
 │   │
 │   └── prompts/
 │       ├── tag_resources.js         # Prompt tagging batch
-│       └── chat_system.js          # System prompt chat assistente
+│       └── chat_system.js           # System prompt chat assistente
 │
 ├── public/                          # Frontend SPA (no bundler)
 │   ├── index.html
@@ -483,19 +507,22 @@ FinOps_TAGViewer/
 │       │   ├── graph.js             # Grafo 3D (3d-force-graph)
 │       │   └── export.js            # Pannello esportazione
 │       └── components/
-│           └── chat.js              # Chat panel SSE floating
+│           ├── chat.js              # Chat panel SSE floating
+│           └── tasks.js             # Task progress widget SSE floating
 │
 └── uploads/                         # File caricati (gitignored)
 ```
 
 ---
 
-## Limitazioni note e sviluppi futuri
+## Limitazioni note
 
-- Il token Azure MSAL è in-memory: si perde al riavvio del server (aggiungere persistenza con cache cifrata)
-- Le relazioni architetturali inferite automaticamente (DEPENDS_ON, ecc.) sono basate su euristiche per tipo di servizio e regione; l'import di relazioni esplicite da AWS Config Rules migliorerà la precisione
-- Il contenuto testuale dei documenti guideline/assessment viene troncato a 50.000 caratteri per rispettare i limiti di contesto LLM
-- Supporto multi-utente non presente: aggiungere sessioni o autenticazione base se l'applicazione è esposta su rete condivisa
+- Il token Azure MSAL è in-memory: si perde al riavvio del server (aggiungere persistenza con cache cifrata se necessario)
+- La sessione SSO AWS scade periodicamente; rieseguire `aws sso login` per rinnovarla
+- Il ruolo AWS deve includere il permesso `bedrock:InvokeModel` sulla regione Bedrock configurata (`BEDROCK_REGION`)
+- Le relazioni architetturali inferite automaticamente sono basate su euristiche per tipo di servizio e regione
+- Il contenuto dei documenti guideline/assessment viene troncato a 50.000 caratteri per i limiti di contesto LLM
+- Supporto multi-utente non presente
 
 ---
 

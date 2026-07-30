@@ -50,17 +50,24 @@ window.renderUpload = async function(projectId) {
   await Promise.all([loadDocuments(projectId), loadTaggingStatus(projectId)]);
 
   document.getElementById('btnRunTagging').addEventListener('click', async () => {
+    const btn = document.getElementById('btnRunTagging');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Avvio…';
     try {
       await window.api.runTagging(projectId);
-      window.toast('Tagging avviato in background', 'success');
-      // Poll status ogni 3s
+      const project = window.getCurrentProject();
+      window.startProgressWatch(projectId, project?.name || projectId);
+      window.toast('Tagging avviato — controlla il widget ⚙ in basso', 'success');
+      // Aggiorna lo stato nella card ogni 4s finché ci sono pending
       const poll = setInterval(async () => {
         await loadTaggingStatus(projectId);
         const s = await window.api.getTaggingStatus(projectId);
-        if ((s.pending || 0) === 0) clearInterval(poll);
-      }, 3000);
+        if ((s.pending || 0) === 0) { clearInterval(poll); btn.disabled = false; btn.innerHTML = '▶ Avvia Tagging LLM'; }
+      }, 4000);
     } catch (e) {
       window.toast('Errore: ' + e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '▶ Avvia Tagging LLM';
     }
   });
 };
