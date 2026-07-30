@@ -13,6 +13,16 @@ async function req(method, path, body) {
   return res.json();
 }
 
+async function del(path) {
+  const res = await fetch(BASE + path, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
 async function upload(path, formData) {
   const res = await fetch(BASE + path, { method: 'POST', body: formData });
   if (!res.ok) {
@@ -60,6 +70,13 @@ window.api = {
   // Auth Azure
   startAzureAuth:    ()        => req('POST',   '/api/auth/azure/start'),
   getAzureAuthStatus:()        => req('GET',    '/api/auth/azure/status'),
+
+  // Strategies
+  getStrategies:   (pid)              => req('GET',   `/api/strategies/${pid}`),
+  createStrategy:  (pid, strategy)    => req('POST',  `/api/strategies/${pid}`, strategy),
+  updateStrategy:  (pid, sid, data)   => req('PATCH', `/api/strategies/${pid}/${sid}`, data),
+  deleteStrategy:  (pid, sid)         => del(`/api/strategies/${pid}/${sid}`),
+  applyStrategies: (pid)              => req('POST',  `/api/strategies/${pid}/apply`, {}),
 };
 
 // Toast helper

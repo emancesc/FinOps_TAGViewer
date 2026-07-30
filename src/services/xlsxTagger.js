@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import fs from 'fs/promises';
 import path from 'path';
 import { getLLM } from './llm.js';
+import { runQuery } from './db.js';
 
 const BATCH_SIZE = 15;
 const SYSTEM_PROMPT = `Sei un esperto FinOps AWS. Analizzi risorse AWS e assegni tag secondo la strategia di tagging CINECA. Rispondi SOLO con un array JSON valido, senza markdown, senza spiegazioni extra.`;
@@ -246,6 +247,18 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
     }
 
     await workbook.xlsx.writeFile(getXlsxOutputPath(projectId));
+
+    // Marca le risorse delivery nel grafo Neo4j
+    try {
+      await runQuery(
+        `MATCH (p:Project {id: $projectId})-[:HAS_RESOURCE]->(r:Resource)
+         WHERE r.nodeType IS NULL OR r.nodeType = 'delivery'
+         SET r.nodeType = 'delivery'`,
+        { projectId }
+      );
+    } catch (dbErr) {
+      console.warn('[xlsxTagger] nodeType update warning:', dbErr.message);
+    }
 
     const job = _xlsxJobs.get(projectId);
     setXlsxProgress(projectId, {

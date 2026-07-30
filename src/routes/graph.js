@@ -6,18 +6,21 @@ const router = Router();
 // GET /api/graph/:projectId — restituisce nodi + archi per il grafo 3D
 router.get('/:projectId', async (req, res) => {
   const { projectId } = req.params;
-  const { filter, filterValue } = req.query;
+  const { filter, filterValue, nodeType } = req.query;
 
   try {
-    // Tutti i nodi risorsa del progetto
+    // Costruisce le condizioni WHERE
     let nodeCypher = `MATCH (p:Project {id: $projectId})-[:HAS_RESOURCE]->(r:Resource)`;
-    if (filter === 'status' && filterValue)
-      nodeCypher += ` WHERE r.status = $filterValue`;
-    else if (filter === 'service' && filterValue)
-      nodeCypher += ` WHERE r.service = $filterValue`;
+    const conditions = [];
+    if (filter === 'status' && filterValue) conditions.push(`r.status = $filterValue`);
+    else if (filter === 'service' && filterValue) conditions.push(`r.service = $filterValue`);
+    if (nodeType && nodeType !== 'all') {
+      conditions.push(`(r.nodeType = $nodeType OR (r.nodeType IS NULL AND $nodeType = 'delivery'))`);
+    }
+    if (conditions.length) nodeCypher += ` WHERE ${conditions.join(' AND ')}`;
     nodeCypher += ` RETURN r`;
 
-    const nodeRecords = await runQuery(nodeCypher, { projectId, filterValue });
+    const nodeRecords = await runQuery(nodeCypher, { projectId, filterValue, nodeType });
     const nodes = nodeRecords.map(rec => {
       const props = rec.get('r').properties;
       return {
@@ -31,6 +34,7 @@ router.get('/:projectId', async (req, res) => {
         proposedTags: props.proposedTags ? JSON.parse(props.proposedTags) : {},
         rawTags: props.rawTags ? JSON.parse(props.rawTags) : {},
         notes: props.notes || '',
+        nodeType: props.nodeType || 'delivery',
       };
     });
 
@@ -85,17 +89,19 @@ router.get('/:projectId/stats', async (req, res) => {
   try {
     const records = await runQuery(
       `MATCH (p:Project {id: $projectId})-[:HAS_RESOURCE]->(r:Resource)
-       RETURN r.status AS status, r.service AS service, count(*) AS cnt`,
+       RETURN r.status AS status, r.service AS service, r.nodeType AS nodeType, count(*) AS cnt`,
       { projectId: req.params.projectId }
     );
-    const byStatus = {}, byService = {};
+    const byStatus = {}, byService = {}, byNodeType = {};
     for (const rec of records) {
       const s = rec.get('status'), svc = rec.get('service');
+      const nt = rec.get('nodeType') || 'delivery';
       const cnt = rec.get('cnt').toNumber();
       byStatus[s] = (byStatus[s] || 0) + cnt;
       byService[svc] = (byService[svc] || 0) + cnt;
+      byNodeType[nt] = (byNodeType[nt] || 0) + cnt;
     }
-    res.json({ byStatus, byService });
+    res.json({ byStatus, byService, byNodeType });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

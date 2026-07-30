@@ -4,12 +4,19 @@ import { parse as csvParse } from 'csv-parse/sync';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { v4 as uuidv4 } from 'uuid';
+import ExcelJS from 'exceljs';
 
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 export async function parseDocument(filePath, docType, originalName) {
   const ext = path.extname(originalName).toLowerCase();
+
+  // assessment + XLSX: parse rows as assessment nodes (skip binary readFile)
+  if (docType === 'assessment' && ext === '.xlsx') {
+    return await parseAssessmentXlsx(filePath);
+  }
+
   const raw = await readFile(filePath, ext);
 
   if (docType === 'resource_export') {
@@ -17,7 +24,7 @@ export async function parseDocument(filePath, docType, originalName) {
     return { content: raw, resources, relationships: inferRelationships(resources) };
   }
 
-  // guideline / assessment: solo testo + nessuna risorsa strutturata
+  // guideline / assessment (non-XLSX): solo testo + nessuna risorsa strutturata
   return { content: raw.slice(0, 50_000), resources: [], relationships: [] };
 }
 
@@ -230,6 +237,115 @@ function parseCsvTags(str) {
 
 function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+// ---------------------------------------------------------------------------
+// Assessment XLSX parser — converte righe in nodi assessment
+// ---------------------------------------------------------------------------
+async function parseAssessmentXlsx(filePath) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+
+  // Seleziona il foglio più rilevante
+  let ws = null;
+  let maxRows = 0;
+  for (const sheet of workbook.worksheets) {
+    const lname = sheet.name.toLowerCase();
+    if (lname.includes('resource') || lname.includes('server') ||
+        lname.includes('component') || lname.includes('assessment') ||
+        lname.includes('inventory')) {
+      ws = sheet;
+      break;
+    }
+    if (sheet.rowCount > maxRows) {
+      maxRows = sheet.rowCount;
+      ws = sheet;
+    }
+  }
+  if (!ws) return { content: '', resources: [], relationships: [] };
+
+  // Leggi intestazioni dalla prima riga
+  const headers = {};
+  ws.getRow(1).eachCell((cell, colIdx) => {
+    if (cell.value !== null && cell.value !== undefined) {
+      headers[colIdx] = String(cell.value).trim();
+    }
+  });
+
+  const colIndices = Object.keys(headers).map(Number);
+  if (!colIndices.length) return { content: '', resources: [], relationships: [] };
+
+  // Auto-detect colonna nome e tipo
+  const NAME_CANDIDATES = ['name', 'nome', 'resource', 'server', 'component',
+                           'hostname', 'host', 'instance', 'service'];
+  const TYPE_CANDIDATES = ['type', 'resourcetype', 'resource type', 'tipo', 'kind', 'categoria'];
+
+  let nameColIdx = Math.min(...colIndices);
+  let typeColIdx = -1;
+
+  for (const [idx, hdr] of Object.entries(headers)) {
+    const lower = hdr.toLowerCase();
+    if (NAME_CANDIDATES.some(c => lower === c || lower.includes(c))) {
+      nameColIdx = Number(idx);
+      break;
+    }
+  }
+  for (const [idx, hdr] of Object.entries(headers)) {
+    const lower = hdr.toLowerCase();
+    if (TYPE_CANDIDATES.some(c => lower === c)) {
+      typeColIdx = Number(idx);
+      break;
+    }
+  }
+
+  const assessmentResources = [];
+  const textLines = [Object.values(headers).join('\t')];
+
+  ws.eachRow((row, rowNum) => {
+    if (rowNum === 1) return;
+
+    const cells = {};
+    let hasData = false;
+    row.eachCell((cell, colIdx) => {
+      if (headers[colIdx] !== undefined && cell.value !== null && cell.value !== undefined) {
+        const strVal = String(cell.value).trim();
+        if (strVal) { cells[headers[colIdx]] = strVal; hasData = true; }
+      }
+    });
+    if (!hasData) return;
+
+    const nameRaw = row.getCell(nameColIdx).value;
+    const nameVal = nameRaw !== null && nameRaw !== undefined ? String(nameRaw).trim() : '';
+    if (!nameVal) return;
+
+    const typeRaw = typeColIdx > 0 ? row.getCell(typeColIdx).value : null;
+    const typeVal = typeRaw !== null && typeRaw !== undefined ? String(typeRaw).trim() : '';
+
+    assessmentResources.push({
+      id: uuidv4(),
+      arn: '',
+      resourceType: typeVal || 'OnPrem::Resource',
+      service: typeVal ? (typeVal.split('::')[0] || 'OnPrem') : 'OnPrem',
+      resourceId: nameVal,
+      name: nameVal,
+      region: cells['Region'] || cells['region'] || cells['Regione'] || '',
+      accountId: '',
+      rawTags: {},
+      proposedTags: {},
+      confidence: 0,
+      status: 'assessment',
+      nodeType: 'assessment',
+      notes: JSON.stringify(cells),
+    });
+
+    textLines.push(Object.values(cells).join('\t'));
+  });
+
+  return {
+    content: textLines.join('\n').slice(0, 50_000),
+    resources: assessmentResources,
+    relationships: [],
+  };
 }
 
 // ---------------------------------------------------------------------------

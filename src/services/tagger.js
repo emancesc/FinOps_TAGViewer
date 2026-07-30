@@ -30,7 +30,8 @@ export async function ingestResources(projectId, resources) {
            r.resourceId = $resourceId, r.name = $name, r.region = $region,
            r.accountId = $accountId, r.rawTags = $rawTags,
            r.proposedTags = $proposedTags, r.confidence = $confidence,
-           r.status = $status, r.notes = $notes, r.projectId = $projectId
+           r.status = $status, r.notes = $notes, r.projectId = $projectId,
+           r.nodeType = $nodeType
        MERGE (p)-[:HAS_RESOURCE]->(r)`,
       {
         projectId,
@@ -47,6 +48,7 @@ export async function ingestResources(projectId, resources) {
         confidence: r.confidence || 0,
         status: r.status || 'pending',
         notes: r.notes || '',
+        nodeType: r.nodeType || 'delivery',
       }
     );
   }

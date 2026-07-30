@@ -26,6 +26,9 @@
     <li class="nav-item disabled" data-view="export">
       <span class="nav-icon">📊</span> Esporta
     </li>
+    <li class="nav-item disabled" data-view="strategies">
+      <span class="nav-icon">🎯</span> Strategie
+    </li>
   </ul>
   <div class="sidebar-project" id="sidebarProject" style="display:none">
     <div class="project-label">Progetto attivo</div>
@@ -35,10 +38,11 @@
 </nav>
 
 <main class="main">
-  <div id="viewProjects" class="view active"></div>
-  <div id="viewUpload"   class="view"></div>
-  <div id="viewGraph"    class="view"></div>
-  <div id="viewExport"   class="view"></div>
+  <div id="viewProjects"   class="view active"></div>
+  <div id="viewUpload"     class="view"></div>
+  <div id="viewGraph"      class="view"></div>
+  <div id="viewExport"     class="view"></div>
+  <div id="viewStrategies" class="view"></div>
 </main>
 
 <!-- Chat panel (float) -->
@@ -63,6 +67,7 @@
 <script type="module" src="/js/views/upload.js"></script>
 <script type="module" src="/js/views/graph.js"></script>
 <script type="module" src="/js/views/export.js"></script>
+<script type="module" src="/js/views/strategies.js"></script>
 <script type="module" src="/js/components/chat.js"></script>
 <script type="module" src="/js/components/tasks.js"></script>
 <script type="module" src="/js/app.js"></script>

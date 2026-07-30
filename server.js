@@ -12,6 +12,7 @@ import taggingRouter from './src/routes/tagging.js';
 import chatRouter from './src/routes/chat.js';
 import exportRouter from './src/routes/export.js';
 import authRouter from './src/routes/auth.js';
+import strategiesRouter from './src/routes/strategies.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -21,13 +22,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use('/api/projects',   projectsRouter);
-app.use('/api/documents',  documentsRouter);
-app.use('/api/graph',      graphRouter);
-app.use('/api/tagging',    taggingRouter);
-app.use('/api/chat',       chatRouter);
-app.use('/api/export',     exportRouter);
-app.use('/api/auth',       authRouter);
+app.use('/api/projects',    projectsRouter);
+app.use('/api/documents',   documentsRouter);
+app.use('/api/graph',       graphRouter);
+app.use('/api/tagging',     taggingRouter);
+app.use('/api/chat',        chatRouter);
+app.use('/api/export',      exportRouter);
+app.use('/api/auth',        authRouter);
+app.use('/api/strategies',  strategiesRouter);
 
 // SPA fallback
 app.get('*', (_req, res) =>
