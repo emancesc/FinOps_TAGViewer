@@ -4,7 +4,7 @@ import { parse as csvParse } from 'csv-parse/sync';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { v4 as uuidv4 } from 'uuid';
-import ExcelJS from 'exceljs';
+import XLSX from 'xlsx';
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -240,88 +240,61 @@ function capitalize(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Assessment XLSX parser — converte righe in nodi assessment
+// Assessment XLSX parser — usa SheetJS (robusto su tutti i file Excel reali)
 // ---------------------------------------------------------------------------
 async function parseAssessmentXlsx(filePath) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  const wb = XLSX.readFile(filePath, { cellDates: true, cellNF: false, cellText: false });
 
   // Seleziona il foglio più rilevante
-  let ws = null;
-  let maxRows = 0;
-  for (const sheet of workbook.worksheets) {
-    const lname = sheet.name.toLowerCase();
-    if (lname.includes('resource') || lname.includes('server') ||
-        lname.includes('component') || lname.includes('assessment') ||
-        lname.includes('inventory')) {
-      ws = sheet;
-      break;
-    }
-    if (sheet.rowCount > maxRows) {
-      maxRows = sheet.rowCount;
-      ws = sheet;
-    }
+  const PREF_KEYWORDS = ['resource', 'server', 'component', 'assessment', 'inventory'];
+  let wsName = wb.SheetNames[0];
+  for (const name of wb.SheetNames) {
+    if (PREF_KEYWORDS.some(k => name.toLowerCase().includes(k))) { wsName = name; break; }
   }
+  const ws = wb.Sheets[wsName];
   if (!ws) return { content: '', resources: [], relationships: [] };
 
-  // Leggi intestazioni dalla prima riga
-  const headers = {};
-  ws.getRow(1).eachCell((cell, colIdx) => {
-    if (cell.value !== null && cell.value !== undefined) {
-      headers[colIdx] = String(cell.value).trim();
-    }
-  });
+  // sheet_to_json header:1 → array di array; row 0 = intestazioni
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (aoa.length < 2) return { content: '', resources: [], relationships: [] };
 
-  const colIndices = Object.keys(headers).map(Number);
-  if (!colIndices.length) return { content: '', resources: [], relationships: [] };
+  const headers = aoa[0].map(h => String(h ?? '').trim());
+  if (!headers.length) return { content: '', resources: [], relationships: [] };
 
-  // Auto-detect colonna nome e tipo
   const NAME_CANDIDATES = ['name', 'nome', 'resource', 'server', 'component',
                            'hostname', 'host', 'instance', 'service'];
   const TYPE_CANDIDATES = ['type', 'resourcetype', 'resource type', 'tipo', 'kind', 'categoria'];
 
-  let nameColIdx = Math.min(...colIndices);
+  let nameColIdx = 0;
   let typeColIdx = -1;
-
-  for (const [idx, hdr] of Object.entries(headers)) {
-    const lower = hdr.toLowerCase();
-    if (NAME_CANDIDATES.some(c => lower === c || lower.includes(c))) {
-      nameColIdx = Number(idx);
-      break;
-    }
+  for (let i = 0; i < headers.length; i++) {
+    const lower = headers[i].toLowerCase();
+    if (NAME_CANDIDATES.some(c => lower === c || lower.includes(c))) { nameColIdx = i; break; }
   }
-  for (const [idx, hdr] of Object.entries(headers)) {
-    const lower = hdr.toLowerCase();
-    if (TYPE_CANDIDATES.some(c => lower === c)) {
-      typeColIdx = Number(idx);
-      break;
-    }
+  for (let i = 0; i < headers.length; i++) {
+    const lower = headers[i].toLowerCase();
+    if (TYPE_CANDIDATES.some(c => lower === c)) { typeColIdx = i; break; }
   }
 
   const assessmentResources = [];
-  const textLines = [Object.values(headers).join('\t')];
+  const textLines = [headers.join('\t')];
 
-  ws.eachRow((row, rowNum) => {
-    if (rowNum === 1) return;
+  for (let r = 1; r < aoa.length; r++) {
+    const row = aoa[r];
+    const nameVal = String(row[nameColIdx] ?? '').trim();
+    if (!nameVal) continue;
 
     const cells = {};
     let hasData = false;
-    row.eachCell((cell, colIdx) => {
-      if (headers[colIdx] !== undefined && cell.value !== null && cell.value !== undefined) {
-        const strVal = String(cell.value).trim();
-        if (strVal) { cells[headers[colIdx]] = strVal; hasData = true; }
-      }
-    });
-    if (!hasData) return;
+    for (let c = 0; c < headers.length; c++) {
+      const v = String(row[c] ?? '').trim();
+      if (headers[c] && v) { cells[headers[c]] = v; hasData = true; }
+    }
+    if (!hasData) continue;
 
-    const nameRaw = row.getCell(nameColIdx).value;
-    const nameVal = nameRaw !== null && nameRaw !== undefined ? String(nameRaw).trim() : '';
-    if (!nameVal) return;
-
-    const typeRaw = typeColIdx > 0 ? row.getCell(typeColIdx).value : null;
-    const typeVal = typeRaw !== null && typeRaw !== undefined ? String(typeRaw).trim() : '';
-
+    const typeVal = typeColIdx >= 0 ? String(row[typeColIdx] ?? '').trim() : '';
     const resId = uuidv4();
+
     assessmentResources.push({
       id: resId,
       arn: `assessment:${resId}`,
@@ -338,9 +311,8 @@ async function parseAssessmentXlsx(filePath) {
       nodeType: 'assessment',
       notes: JSON.stringify(cells),
     });
-
     textLines.push(Object.values(cells).join('\t'));
-  });
+  }
 
   return {
     content: textLines.join('\n').slice(0, 50_000),

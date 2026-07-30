@@ -1,3 +1,4 @@
+import XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import fs from 'fs/promises';
 import path from 'path';
@@ -25,66 +26,37 @@ function setXlsxProgress(projectId, patch) {
 // A) Detect columns
 // ---------------------------------------------------------------------------
 export async function detectXlsxColumns(filePath) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
+  const sheets = wb.SheetNames;
 
-  const sheets = workbook.worksheets.map(ws => ws.name);
-
-  // Default sheet: name contains "resource" (case-insensitive) OR most rows
+  // Scegli il foglio più rilevante
   let defaultSheet = sheets[0] || '';
-  let maxRows = 0;
-  for (const ws of workbook.worksheets) {
-    if (ws.name.toLowerCase().includes('resource')) {
-      defaultSheet = ws.name;
-      break;
-    }
-    if (ws.rowCount > maxRows) {
-      maxRows = ws.rowCount;
-      defaultSheet = ws.name;
-    }
+  for (const name of sheets) {
+    if (name.toLowerCase().includes('resource')) { defaultSheet = name; break; }
   }
 
-  const ws = workbook.getWorksheet(defaultSheet);
-  const allHeaders = [];
-  if (ws) {
-    ws.getRow(1).eachCell(cell => {
-      if (cell.value !== null && cell.value !== undefined) {
-        allHeaders.push(String(cell.value));
-      }
-    });
-  }
+  const ws = wb.Sheets[defaultSheet];
+  const aoa = ws ? XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) : [];
+  const allHeaders = (aoa[0] || []).map(h => String(h ?? '').trim()).filter(Boolean);
 
-  // Detection rules
-  const tagColumns = allHeaders.filter(h => /^Tag:cineca:/i.test(h));
-  const noteColumns = allHeaders.filter(h => /^cineca:.+_note$/i.test(h));
-  const taggableCol = allHeaders.find(h => h.toLowerCase() === 'taggable') || 'Taggable';
-  const identifierColumns = allHeaders.filter(h =>
-    /^(Identifier|ARN|Arn|ResourceARN)$/i.test(h)
-  );
+  const tagColumns    = allHeaders.filter(h => /^Tag:cineca:/i.test(h));
+  const noteColumns   = allHeaders.filter(h => /^cineca:.+_note$/i.test(h));
+  const taggableCol   = allHeaders.find(h => h.toLowerCase() === 'taggable') || 'Taggable';
+  const identifierColumns = allHeaders.filter(h => /^(Identifier|ARN|Arn|ResourceARN)$/i.test(h));
 
   const CONTEXT_CANDIDATES = ['resource type', 'region', 'aws account', 'service',
     'cfnresourcetype', 'application', 'tags'];
   const contextColumns = allHeaders.filter(h => {
-    if (/^Tag:cineca:/i.test(h)) return false;
-    if (/^cineca:.+_note$/i.test(h)) return false;
+    if (/^Tag:cineca:/i.test(h) || /^cineca:.+_note$/i.test(h)) return false;
     return CONTEXT_CANDIDATES.includes(h.toLowerCase());
   });
 
-  // Count taggable rows
+  // Conta righe Taggable=Y
   let taggableCount = 0;
-  if (ws) {
-    let taggableColIdx = -1;
-    ws.getRow(1).eachCell((cell, colIdx) => {
-      if (cell.value && String(cell.value).toLowerCase() === taggableCol.toLowerCase()) {
-        taggableColIdx = colIdx;
-      }
-    });
-    if (taggableColIdx > 0) {
-      ws.eachRow((row, rowNum) => {
-        if (rowNum === 1) return;
-        const val = row.getCell(taggableColIdx).value;
-        if (val && String(val).toLowerCase() === 'y') taggableCount++;
-      });
+  const taggableColIdx = allHeaders.indexOf(taggableCol);
+  if (taggableColIdx >= 0) {
+    for (let r = 1; r < aoa.length; r++) {
+      if (String(aoa[r][taggableColIdx] ?? '').toLowerCase() === 'y') taggableCount++;
     }
   }
 
@@ -142,39 +114,33 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
       totalLen += chunk.length;
     }
 
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(filePath);
+    // Leggi con SheetJS (tollerante a tutte le estensioni Excel)
+    const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
+    if (!wb.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" non trovato`);
+    const wsRaw = wb.Sheets[sheetName];
+    const aoa = XLSX.utils.sheet_to_json(wsRaw, { header: 1, defval: '' });
+    if (aoa.length < 2) throw new Error('Foglio vuoto o senza dati');
 
-    const ws = workbook.getWorksheet(sheetName);
-    if (!ws) throw new Error(`Sheet "${sheetName}" non trovato`);
-
-    // Build column index map
+    // Build column index map (0-based)
+    const headers = aoa[0].map(h => String(h ?? '').trim());
     const colMap = {};
-    ws.getRow(1).eachCell((cell, colIdx) => {
-      if (cell.value !== null && cell.value !== undefined) {
-        colMap[String(cell.value)] = colIdx;
-      }
-    });
+    headers.forEach((h, i) => { if (h) colMap[h] = i; });
 
     // Collect taggable rows
-    const taggableColIdx = colMap[taggableColumn];
+    const taggableColIdx = colMap[taggableColumn] ?? -1;
     const taggableRows = [];
-    ws.eachRow((row, rowNum) => {
-      if (rowNum === 1) return;
-      if (!taggableColIdx) return;
-      const cellVal = row.getCell(taggableColIdx).value;
-      if (cellVal && String(cellVal).toLowerCase() === (taggableValue || 'Y').toLowerCase()) {
-        const cells = {};
-        [...identifierColumns, ...contextColumns, ...tagColumns, ...noteColumns].forEach(colName => {
-          const idx = colMap[colName];
-          if (idx) {
-            const v = row.getCell(idx).value;
-            cells[colName] = v !== null && v !== undefined ? String(v) : '';
-          }
-        });
-        taggableRows.push({ rowNumber: rowNum, cells });
-      }
-    });
+    for (let r = 1; r < aoa.length; r++) {
+      const row = aoa[r];
+      if (taggableColIdx < 0) continue;
+      const cellVal = String(row[taggableColIdx] ?? '').trim();
+      if (cellVal.toLowerCase() !== (taggableValue || 'Y').toLowerCase()) continue;
+      const cells = {};
+      [...identifierColumns, ...contextColumns, ...tagColumns, ...noteColumns].forEach(colName => {
+        const idx = colMap[colName];
+        if (idx !== undefined) cells[colName] = String(row[idx] ?? '');
+      });
+      taggableRows.push({ rowNumber: r + 1, cells }); // rowNumber è 1-indexed come Excel
+    }
 
     const total = taggableRows.length;
     const batchTotal = Math.ceil(total / BATCH_SIZE);
@@ -235,18 +201,21 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
       const results = extractJsonArray(responseText);
       for (const result of results) {
         if (!result.rowNumber || !result.tags) continue;
-        const row = ws.getRow(result.rowNumber);
+        const rowIdx = result.rowNumber - 1; // 0-based
         for (const [colName, value] of Object.entries(result.tags)) {
           const colIdx = colMap[colName];
-          if (colIdx !== undefined) row.getCell(colIdx).value = value;
+          if (colIdx === undefined) continue;
+          const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: colIdx });
+          wsRaw[cellRef] = { t: 's', v: String(value) };
         }
-        row.commit();
       }
 
       setXlsxProgress(projectId, { processed: Math.min(i + BATCH_SIZE, total) });
     }
 
-    await workbook.xlsx.writeFile(getXlsxOutputPath(projectId));
+    // Aggiorna il range del foglio dopo le modifiche
+    XLSX.utils.sheet_add_aoa(wsRaw, [], { origin: -1 });
+    XLSX.writeFile(wb, getXlsxOutputPath(projectId));
 
     // Marca le risorse delivery nel grafo Neo4j
     try {
@@ -287,18 +256,15 @@ export function getXlsxOutputPath(projectId) {
 export async function extractFileText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.xlsx' || ext === '.xls') {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(filePath);
+    const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
     const lines = [];
-    workbook.worksheets.forEach(ws => {
-      ws.eachRow(row => {
-        const vals = [];
-        row.eachCell(cell => {
-          if (cell.value !== null && cell.value !== undefined) vals.push(String(cell.value));
-        });
+    for (const name of wb.SheetNames) {
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+      for (const row of aoa) {
+        const vals = row.map(v => String(v ?? '')).filter(Boolean);
         if (vals.length) lines.push(vals.join('\t'));
-      });
-    });
+      }
+    }
     return lines.join('\n');
   }
   const buf = await fs.readFile(filePath);
