@@ -62,7 +62,8 @@ window.api = {
   runXlsxTagging:    (pid)     => req('POST', `/api/tagging/${pid}/run-xlsx`, {}),
   pauseXlsxTagging:  (pid)     => req('POST', `/api/tagging/${pid}/pause-xlsx`, {}),
   resumeXlsxTagging: (pid)     => req('POST', `/api/tagging/${pid}/resume-xlsx`, {}),
-  getXlsxProgress:   (pid)     => `/api/tagging/${pid}/progress-xlsx`,
+  getXlsxProgress:       (pid) => `/api/tagging/${pid}/progress-xlsx`,
+  getXlsxProgressStatus: (pid) => req('GET', `/api/tagging/${pid}/progress-xlsx-status`),
   getXlsxResultUrl:  (pid)     => `/api/tagging/${pid}/result-xlsx`,
 
   // Export

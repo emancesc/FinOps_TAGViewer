@@ -184,6 +184,12 @@ router.post('/:projectId/run-xlsx', async (req, res) => {
   }
 });
 
+// GET /api/tagging/:projectId/progress-xlsx-status — snapshot JSON (non SSE)
+router.get('/:projectId/progress-xlsx-status', (req, res) => {
+  const p = getXlsxTaggingProgress(req.params.projectId);
+  res.json(p || { status: 'idle' });
+});
+
 // GET /api/tagging/:projectId/progress-xlsx — SSE stream progresso XLSX
 router.get('/:projectId/progress-xlsx', (req, res) => {
   res.writeHead(200, {

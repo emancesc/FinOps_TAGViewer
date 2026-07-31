@@ -65,6 +65,14 @@ window.renderUpload = async function(projectId) {
       renderColumnConfigPanel(projectId, null, project.taggingTargetFile, project);
     }
   }
+
+  // Auto-reconnect SSE se un job XLSX è già in corso (avviato da sessione precedente)
+  try {
+    const snap = await fetch(`/api/tagging/${projectId}/progress-xlsx-status`).then(r => r.json());
+    if ((snap.status === 'running' || snap.status === 'paused') && !window._activeSources?.has(projectId)) {
+      window.startProgressWatch(projectId, project?.name || projectId, window.api.getXlsxProgress(projectId));
+    }
+  } catch (_) {}
 };
 
 // ---------------------------------------------------------------------------
