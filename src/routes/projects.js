@@ -123,6 +123,22 @@ router.patch('/:id/column-config', async (req, res) => {
   }
 });
 
+// DELETE /api/projects/:id/resources — cancella solo le risorse, mantiene progetto e documenti
+router.delete('/:id/resources', async (req, res) => {
+  try {
+    const result = await runQuery(
+      `MATCH (p:Project {id: $id})-[:HAS_RESOURCE]->(r:Resource)
+       DETACH DELETE r
+       RETURN count(r) AS deleted`,
+      { id: req.params.id }
+    );
+    const deleted = result[0]?.get('deleted')?.toNumber() ?? 0;
+    res.json({ deleted });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/projects/:id
 router.delete('/:id', async (req, res) => {
   try {
