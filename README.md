@@ -52,7 +52,7 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 │  ┌───────────────────────────────────────────────────────────────────┐   │
 │  │                       LLM Abstraction                             │   │
 │  │  AWS Bedrock (Claude, SSO IAM) │ Azure OpenAI + MSAL device-code │   │
-│  │  Anthropic direct (API Key)                                       │   │
+│  │  Anthropic direct (API Key)   │ Ollama locale (GPU, gratuito)    │   │
 │  └───────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────┬───────────────────────────────────────┘
                                    │ Bolt / neo4j+s
@@ -188,7 +188,7 @@ Applicazione web per la **governance del tagging AWS** basata su graph database.
 
 ## Ollama — modello locale (opzione gratuita)
 
-Ollama permette di eseguire modelli LLM localmente senza API key né costi per token. È l'opzione consigliata in ambienti con restrizioni di rete o per test.
+Ollama permette di eseguire modelli LLM localmente senza API key né costi per token. È l'opzione consigliata in ambienti con restrizioni di rete o per test. Con una GPU NVIDIA dedicata si ottengono prestazioni paragonabili ai servizi cloud.
 
 ### Installazione
 
@@ -198,31 +198,74 @@ Ollama permette di eseguire modelli LLM localmente senza API key né costi per t
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### Scarica un modello
+### Scelta del modello in base alla VRAM disponibile
+
+Il criterio fondamentale è che il modello entri **completamente in VRAM** — un modello parzialmente su CPU è 4–6× più lento.
+
+| VRAM GPU | Modello consigliato | Dimensione | Token/s stimati |
+|---|---|---|---|
+| 4–6 GB | `mistral:7b-instruct-q4_K_M` | 4.1 GB | 30–50 tok/s |
+| 6–8 GB | `mistral:7b-instruct-q4_K_M` | 4.1 GB | 40–60 tok/s |
+| 8–12 GB | `llama3.1:8b-instruct-q4_K_M` | 5.0 GB | 50–80 tok/s |
+| Solo CPU | `llama3.2:3b` | 2.0 GB | 5–15 tok/s |
 
 ```bash
-# Modello consigliato per tagging (buon equilibrio velocità/qualità, 2 GB)
-ollama pull llama3.2
+# GPU con 6 GB VRAM (es. RTX 3060 Laptop) — entra tutto in GPU
+ollama pull mistral:7b-instruct-q4_K_M
 
-# Alternativa più capace (4 GB)
-ollama pull qwen2.5-coder:7b
-
-# Verifica modelli disponibili
+# Verifica modelli disponibili e dove girano (CPU/GPU %)
 ollama list
+ollama ps   # mostra il modello caricato con la % CPU/GPU
 ```
 
-### Avvio
+> **Diagnostica GPU**: `ollama ps` mostra `PROCESSOR = 0%/100% CPU/GPU` se tutto è in GPU.  
+> Se la % CPU è alta (> 20%), il modello è troppo grande per la VRAM disponibile → scegli un modello più piccolo.
 
-Ollama si avvia automaticamente come servizio in background dopo l'installazione.  
-URL API: `http://localhost:11434` (configurabile con `OLLAMA_BASE_URL` nel `.env`)
+### Avvio ottimizzato con parallelismo GPU
+
+Ollama di default serve una richiesta LLM alla volta. Per sfruttare i **worker paralleli** di TagsViewer è necessario avviarlo con parallelismo abilitato.
+
+**Windows (PowerShell):**
+```powershell
+# Termina il servizio Ollama corrente se in esecuzione
+Stop-Process -Name "ollama" -Force -ErrorAction SilentlyContinue
+
+# Riavvia con 2 richieste parallele e Flash Attention (~25% più veloce)
+$env:OLLAMA_NUM_PARALLEL = "2"
+$env:OLLAMA_FLASH_ATTENTION = "1"
+ollama serve
+```
+
+**Linux / macOS:**
+```bash
+# Aggiungi al proprio .bashrc / .zshrc per renderlo persistente
+export OLLAMA_NUM_PARALLEL=2
+export OLLAMA_FLASH_ATTENTION=1
+ollama serve
+```
+
+> Con `OLLAMA_NUM_PARALLEL=2` e 2 worker attivi in TagsViewer, le due chiamate LLM vengono eseguite **veramente in parallelo** — le prestazioni raddoppiano rispetto al default sequenziale.
+
+### Parametri GPU nelle chiamate API
+
+TagsViewer invia automaticamente i seguenti parametri Ollama ad ogni richiesta:
+
+| Parametro | Valore | Effetto |
+|---|---|---|
+| `num_gpu` | 999 | Ollama carica in VRAM tutti i layer che ci entrano |
+| `num_ctx` | 20480 (configurabile) | Finestra di contesto: 20K token ≈ 80K caratteri — bilancia qualità e uso VRAM KV cache |
+
+`OLLAMA_NUM_CTX` nel `.env` permette di ridurre il contesto se la VRAM è scarsa (es. 8192 per GPU da 4 GB).
 
 ### Configurazione in TagsViewer
 
 1. Crea un nuovo progetto e seleziona **"Ollama (modello locale)"** come LLM provider
-2. Specifica il nome del modello (es. `llama3.2`)
-3. Tutti i tag e la chat useranno il modello locale — nessuna chiamata a servizi esterni
+2. Specifica il nome del modello (es. `mistral:7b-instruct-q4_K_M`)
+3. Configura i worker paralleli nella sezione "Configurazione Colonne" del file XLSX (valore consigliato: **2** con `OLLAMA_NUM_PARALLEL=2`)
+4. Tutti i tag e la chat useranno il modello locale — nessuna chiamata a servizi esterni
 
-> **Nota prestazioni**: i modelli locali sono più lenti dei modelli cloud. Con 3 worker paralleli e `llama3.2` su hardware moderno si ottengono ~5–10 righe/minuto. Modelli più piccoli (`tinyllama`, `phi3`) sono più veloci ma meno accurati per il tagging.
+> **Prestazioni attese** con RTX 3060 Laptop (6 GB VRAM) + `mistral:7b-instruct-q4_K_M` + 2 worker:  
+> ~30–50 tok/s → circa **40–70 righe/minuto** → 5107 righe in **~1–2 ore** (contro 5–6 ore con modello parzialmente su CPU).
 
 ---
 
@@ -233,7 +276,8 @@ URL API: `http://localhost:11434` (configurabile con `OLLAMA_BASE_URL` nel `.env
   - **Locale**: Neo4j Community Edition — URI: `bolt://localhost:7687`
   - **Cloud**: [AuraDB Free](https://neo4j.com/cloud/platform/aura-graph-database/) — URI: `neo4j+s://xxxxxxxx.databases.neo4j.io`
 - Almeno uno tra:
-  - **AWS CLI** configurato con SSO (profilo con permessi `bedrock:InvokeModel`) — opzione consigliata
+  - **Ollama** installato localmente con un modello compatibile con la VRAM disponibile — opzione gratuita consigliata per ambienti con restrizioni di rete (vedi [sezione Ollama](#ollama--modello-locale-opzione-gratuita))
+  - **AWS CLI** configurato con SSO (profilo con permessi `bedrock:InvokeModel`)
   - **Anthropic API Key** — da [console.anthropic.com](https://console.anthropic.com)
   - **Azure OpenAI** endpoint (API Key o credenziali SSO aziendali via MSAL)
 
