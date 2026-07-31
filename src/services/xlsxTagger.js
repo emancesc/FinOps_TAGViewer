@@ -5,7 +5,7 @@ import path from 'path';
 import { getLLM } from './llm.js';
 import { runQuery } from './db.js';
 
-const BATCH_SIZE = 15;
+const BATCH_SIZE = parseInt(process.env.XLSX_BATCH_SIZE || '8', 10);
 const SYSTEM_PROMPT = `Sei un esperto FinOps AWS. Analizzi risorse AWS e assegni tag secondo la strategia di tagging CINECA. Rispondi SOLO con un array JSON valido, senza markdown, senza spiegazioni extra.`;
 
 // ---------------------------------------------------------------------------
@@ -130,10 +130,11 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
   });
 
   try {
-    // Limiti contesto: num_ctx=8192 token ≈ 32K chars; lasciamo ~24K per i doc
-    // (il resto va a prompt, risorse, risposta). Con GPU da 8+ GB alzare OLLAMA_NUM_CTX=12288.
-    const maxDocChars  = parseInt(process.env.OLLAMA_DOC_MAX_CHARS  || '3000',  10);
-    const maxTotalChars = parseInt(process.env.OLLAMA_CTX_MAX_CHARS || '20000', 10);
+    // Contesto documenti: testo AWS (ARN, JSON) tokenizza ~2-3 chars/token, non 4.
+    // Con num_ctx=8192 e input già a 2000 tok (prompt+risorse), al massimo 4000 chars
+    // di documenti (≈1600 tok) per lasciare ≥4500 tok liberi per l'output.
+    const maxDocChars  = parseInt(process.env.OLLAMA_DOC_MAX_CHARS  || '1000', 10);
+    const maxTotalChars = parseInt(process.env.OLLAMA_CTX_MAX_CHARS || '4000', 10);
     let contextStr = '';
     let totalLen = 0;
     for (const text of (contextDocTexts || [])) {

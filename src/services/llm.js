@@ -248,9 +248,12 @@ class OllamaLLM {
   }
 
   async complete(systemPrompt, userMessage) {
-    // Timeout esplicito: 3 min per batch (previene hang su risposte lente)
+    // Timeout esplicito: 5 min per batch (previene hang su risposte lente)
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 180_000);
+    const timer = setTimeout(() => controller.abort(), 300_000);
+    const promptLen = systemPrompt.length + userMessage.length;
+    if (promptLen > 8000) console.warn(`[ollama] prompt grande: ${promptLen} chars (~${Math.round(promptLen/3)} token)`);
+    else console.log(`[ollama] prompt: ${promptLen} chars`);
     let res;
     try {
       res = await fetch(`${this._baseUrl}/api/chat`, {
