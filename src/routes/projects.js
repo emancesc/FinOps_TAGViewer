@@ -93,22 +93,28 @@ router.patch('/:id', async (req, res) => {
 // PATCH /api/projects/:id/column-config
 router.patch('/:id/column-config', async (req, res) => {
   const { columnConfig, promptTemplate, taggingTargetFile } = req.body;
-  if (!columnConfig && !promptTemplate && !taggingTargetFile) {
+  if (columnConfig === undefined && promptTemplate === undefined && taggingTargetFile === undefined) {
     return res.status(400).json({ error: 'Nessun campo da aggiornare' });
   }
+  // Aggiorna solo i campi esplicitamente presenti nel body (evita di azzerare taggingTargetFile)
   try {
+    const setClauses = [];
+    const params = { id: req.params.id };
+    if (columnConfig !== undefined) {
+      setClauses.push('p.columnConfig = $columnConfig');
+      params.columnConfig = JSON.stringify(columnConfig);
+    }
+    if (promptTemplate !== undefined) {
+      setClauses.push('p.promptTemplate = $promptTemplate');
+      params.promptTemplate = promptTemplate || null;
+    }
+    if (taggingTargetFile !== undefined) {
+      setClauses.push('p.taggingTargetFile = $taggingTargetFile');
+      params.taggingTargetFile = taggingTargetFile || null;
+    }
     const records = await runQuery(
-      `MATCH (p:Project {id: $id})
-       SET p.columnConfig = $columnConfig,
-           p.promptTemplate = $promptTemplate,
-           p.taggingTargetFile = $taggingTargetFile
-       RETURN p`,
-      {
-        id: req.params.id,
-        columnConfig: columnConfig ? JSON.stringify(columnConfig) : null,
-        promptTemplate: promptTemplate || null,
-        taggingTargetFile: taggingTargetFile || null,
-      }
+      `MATCH (p:Project {id: $id}) SET ${setClauses.join(', ')} RETURN p`,
+      params
     );
     if (!records.length) return res.status(404).json({ error: 'Progetto non trovato' });
     res.json({ ok: true });

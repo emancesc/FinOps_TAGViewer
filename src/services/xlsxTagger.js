@@ -142,8 +142,11 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
 
     // Leggi con SheetJS
     const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
-    if (!wb.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" non trovato`);
-    const wsRaw = wb.Sheets[sheetName];
+    const effectiveSheet = (sheetName && wb.SheetNames.includes(sheetName))
+      ? sheetName
+      : wb.SheetNames[0];
+    if (!effectiveSheet) throw new Error('Foglio XLSX non trovato');
+    const wsRaw = wb.Sheets[effectiveSheet];
     const aoa = XLSX.utils.sheet_to_json(wsRaw, { header: 1, defval: '' });
     if (aoa.length < 2) throw new Error('Foglio vuoto o senza dati');
 
@@ -196,6 +199,7 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
     // Shared counters — safe without mutex (JS single-thread event loop)
     let globalProcessed = 0;
     let globalBatchesDone = 0;
+    const workerStatus = new Array(WORKERS).fill('in attesa…');
 
     // Worker: processes its segment, returns [{rowIdx, colIdx, value}]
     const runWorker = async (wId, segment) => {
@@ -207,6 +211,10 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
         if (_xlsxJobs.get(projectId)?.status === 'error') return updates; // aborted by another worker
 
         const batch = segment.slice(i, i + BATCH_SIZE);
+
+        // Heartbeat: aggiorna stato worker prima della chiamata LLM
+        workerStatus[wId] = `rig. ${batch[0].rowNumber}–${batch[batch.length - 1].rowNumber}`;
+        setXlsxProgress(projectId, { workerStatus: [...workerStatus] });
 
         const rowsJson = batch.map(r => {
           const obj = { rowNumber: r.rowNumber };
@@ -261,12 +269,13 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
 
         globalProcessed = Math.min(globalProcessed + batch.length, total);
         globalBatchesDone++;
+        workerStatus[wId] = `✓ rig. ${batch[0].rowNumber}–${batch[batch.length - 1].rowNumber}`;
 
         const job2 = _xlsxJobs.get(projectId);
         const elapsed = job2?.startedAt ? Date.now() - job2.startedAt : 1;
         const rate = elapsed > 0 ? globalProcessed / elapsed : 0;
         const etaMs = rate > 0 && globalProcessed < total ? Math.round((total - globalProcessed) / rate) : null;
-        setXlsxProgress(projectId, { processed: globalProcessed, batch: globalBatchesDone, etaMs });
+        setXlsxProgress(projectId, { processed: globalProcessed, batch: globalBatchesDone, etaMs, workerStatus: [...workerStatus] });
       }
       return updates;
     };

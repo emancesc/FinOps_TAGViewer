@@ -163,10 +163,17 @@ function jobCardHtml(projectId, projectName, d) {
 
       ${isActive ? `
         <div style="font-size:.78rem;color:var(--text-muted);margin:4px 0">
-          Batch ${d.batch || 0}/${d.batchTotal || '?'} — ${d.processed || 0}/${d.total} risorse
-          ${d.workers > 1 ? `<span style="color:var(--accent);margin-left:6px">⚡ ${d.workers} worker paralleli</span>` : ''}
-          ${d.currentNames?.length ? `<br><span style="opacity:.7">▸ ${d.currentNames.join(', ')}</span>` : ''}
+          <strong>${d.processed || 0}/${d.total}</strong> risorse
+          &nbsp;·&nbsp; batch ${d.batch || 0}/${d.batchTotal || '?'}
+          ${d.workers > 1 ? `<span style="color:var(--accent);margin-left:6px">⚡ ${d.workers} worker</span>` : ''}
         </div>
+        ${d.workerStatus?.length > 1 ? `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:3px 0 5px">
+            ${d.workerStatus.map((s, i) => `
+              <span style="font-size:.7rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;padding:1px 6px;white-space:nowrap">
+                W${i} ${s || '…'}
+              </span>`).join('')}
+          </div>` : ''}
         <div class="task-progress-bar">
           <div class="task-progress-fill" style="width:${pct}%"></div>
         </div>

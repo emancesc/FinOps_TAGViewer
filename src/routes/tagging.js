@@ -142,6 +142,17 @@ router.post('/:projectId/run-xlsx', async (req, res) => {
 
     if (!taggingTargetFile) return res.status(400).json({ error: 'Nessun file XLSX target configurato' });
 
+    // Auto-detect columns if config is missing or incomplete
+    if (!columnConfig.sheetName || !columnConfig.tagColumns?.length) {
+      try {
+        const detected = await detectXlsxColumns(`uploads/${taggingTargetFile}`);
+        columnConfig = { ...detected.suggestedConfig, ...columnConfig };
+        console.log(`[tagging] auto-detect colonne: sheet="${columnConfig.sheetName}", ${columnConfig.tagColumns?.length} tag cols`);
+      } catch (detectErr) {
+        console.warn('[tagging] auto-detect colonne fallito:', detectErr.message);
+      }
+    }
+
     // Load context documents
     const docRecords = await runQuery(
       `MATCH (p:Project {id: $id})-[:HAS_DOCUMENT]->(d:Document)
