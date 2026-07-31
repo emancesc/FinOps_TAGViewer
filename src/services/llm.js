@@ -248,19 +248,31 @@ class OllamaLLM {
   }
 
   async complete(systemPrompt, userMessage) {
-    const res = await fetch(`${this._baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: this._modelName,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-        stream: false,
-        options: this._ollamaOptions,
-      }),
-    });
+    // Timeout esplicito: 3 min per batch (previene hang su risposte lente)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    let res;
+    try {
+      res = await fetch(`${this._baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this._modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          stream: false,
+          options: this._ollamaOptions,
+        }),
+      });
+    } catch (err) {
+      // Espone la causa reale (es. ECONNRESET, ETIMEDOUT, AbortError)
+      throw new Error(`Ollama fetch error: ${err.cause?.message || err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) {
       const txt = await res.text().catch(() => res.statusText);
       throw new Error(`Ollama ${res.status}: ${txt}`);
