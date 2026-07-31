@@ -130,12 +130,15 @@ export async function runXlsxTagging(projectId, config, llmProvider, promptTempl
   });
 
   try {
-    // Build context string (max 8000 chars/doc, 60000 total)
+    // Limiti contesto: num_ctx=8192 token ≈ 32K chars; lasciamo ~24K per i doc
+    // (il resto va a prompt, risorse, risposta). Con GPU da 8+ GB alzare OLLAMA_NUM_CTX=12288.
+    const maxDocChars  = parseInt(process.env.OLLAMA_DOC_MAX_CHARS  || '3000',  10);
+    const maxTotalChars = parseInt(process.env.OLLAMA_CTX_MAX_CHARS || '20000', 10);
     let contextStr = '';
     let totalLen = 0;
     for (const text of (contextDocTexts || [])) {
-      const chunk = (text || '').slice(0, 8000);
-      if (totalLen + chunk.length > 60000) break;
+      const chunk = (text || '').slice(0, maxDocChars);
+      if (totalLen + chunk.length > maxTotalChars) break;
       contextStr += `\n---\n${chunk}\n`;
       totalLen += chunk.length;
     }

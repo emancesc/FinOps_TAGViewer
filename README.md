@@ -253,9 +253,11 @@ TagsViewer invia automaticamente i seguenti parametri Ollama ad ogni richiesta:
 | Parametro | Valore | Effetto |
 |---|---|---|
 | `num_gpu` | 999 | Ollama carica in VRAM tutti i layer che ci entrano |
-| `num_ctx` | 20480 (configurabile) | Finestra di contesto: 20K token ≈ 80K caratteri — bilancia qualità e uso VRAM KV cache |
+| `num_ctx` | 8192 (configurabile) | Finestra di contesto: 8K token ≈ 32K caratteri — KV cache ~1 GB, sicuro su 6 GB VRAM |
 
-`OLLAMA_NUM_CTX` nel `.env` permette di ridurre il contesto se la VRAM è scarsa (es. 8192 per GPU da 4 GB).
+`OLLAMA_NUM_CTX` nel `.env` permette di aumentare il contesto se si ha più VRAM (es. `12288` con 8 GB VRAM).  
+**Formula**: KV cache (MB) = num_layers × 4096 × num_ctx ÷ 1.000.000 → per Mistral 7B (32 layer): 8192→1.0 GB, 12288→1.5 GB, 20480→2.5 GB (OOM su 6 GB).  
+`OLLAMA_DOC_MAX_CHARS` e `OLLAMA_CTX_MAX_CHARS` nel `.env` limitano i caratteri dei documenti di contesto inviati al modello (default: 3000/doc, 20000 totali).
 
 ### Configurazione in TagsViewer
 

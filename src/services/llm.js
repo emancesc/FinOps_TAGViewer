@@ -237,11 +237,13 @@ class OllamaLLM {
   constructor(modelOverride) {
     this._modelName = modelOverride || process.env.OLLAMA_MODEL || 'llama3.2';
     this._baseUrl = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/$/, '');
-    // num_ctx: 20480 token (~80K chars) bilancia qualità e VRAM su GPU da 6-8 GB
+    // num_ctx: 8192 token (~32K chars) — KV cache ~1 GB, sicuro su GPU da 6 GB
+    //   (20480 = 2.5 GB KV → OOM su 6 GB con mistral 7B da 4.1 GB)
+    //   Aumentare OLLAMA_NUM_CTX a 12288 se si hanno 8+ GB VRAM
     // num_gpu: 999 forza tutti i layer su GPU (Ollama scarica quanti ne entrano)
     this._ollamaOptions = {
       num_gpu: 999,
-      num_ctx: parseInt(process.env.OLLAMA_NUM_CTX || '20480', 10),
+      num_ctx: parseInt(process.env.OLLAMA_NUM_CTX || '8192', 10),
     };
   }
 
